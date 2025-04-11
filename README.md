@@ -1,2 +1,3 @@
-# cs4nlp
-Uncertainty driven inference
+# CS4NLP Project
+
+Uncertainty driven inference.
