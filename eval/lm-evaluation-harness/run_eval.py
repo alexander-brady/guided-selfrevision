@@ -28,7 +28,7 @@ results = evaluator.simple_evaluate(
     tasks=["aime24_nofigures", "openai_math"],
     batch_size="auto",
     log_samples=True,
-    generation_kwargs=gen_kwargs
+    gen_kwargs=gen_kwargs
 )
 
 # Print results table
@@ -37,6 +37,6 @@ print(evaluator.make_table(results))
 
 # Save results to file
 results_path = "./results/results.json"
-evaluator.save_results(results, results_path)
+evaluator.save_results(results=results, path=results_path)
 print(f"\nDetailed results saved to: {results__path}")
 
