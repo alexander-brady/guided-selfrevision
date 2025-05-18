@@ -518,6 +518,7 @@ class VLLM(TemplateLM):
                 if isinstance(signals, str) and "###" in signals:
                     signals = [s.strip() for s in signals.split("###")]
 
+                # test 
                 # Handle list case
                 if isinstance(signals, list) and len(signals) > 0:
                     import random
