@@ -12,8 +12,12 @@ model_args = {
     "gpu_memory_utilization": 0.85
 }
 
+# Thinking tokens
+thinking_tokens = "Wait;Let us reconsider...;Hmm, I should double-check this.;On second thought...;Actually...;Wait, that cannot be right.;Let me verify this calculation.;I need to analyze this from another angle.;Let us try a different approach.;I should break this down further.;Let me work through this step-by-step.;I am not confident in this result yet.;Let me trace through the logic again.;There may be something I am overlooking here.;This deserves more careful analysis.;Let me reason through this systematically.;Is this even right?;Is this correct;Could this be wrong;So, given this and that;Is this the right conclusion?;Is this sound logic?;Is this a logical conclusion..."
+
+
 # Define generation parameters
-gen_kwargs = 'max_gen_toks=2000,max_tokens_thinking=1800,thinking_n_ignore_str="Wait;Let us reconsider...;Hmm, I should double-check this.;On second thought...;Actually...;Wait, that cannot be right.;Let me verify this calculation.;I need to analyze this from another angle.;Let us try a different approach.;I should break this down further.;Let me work through this step-by-step.;I am not confident in this result yet.;Let me trace through the logic again.;There may be something I am overlooking here.;This deserves more careful analysis.;Let me reason through this systematically.;Is this even right?;Is this correct;Could this be wrong;So, given this and that;Is this the right conclusion?;Is this sound logic?;Is this a logical conclusion..."'
+gen_kwargs = f'max_gen_toks=2000,max_tokens_thinking=1800,thinking_n_ignore_str="{thinking_tokens}"'
 
 
 # Run the evaluation
@@ -34,4 +38,4 @@ print(evaluator.make_table(results))
 # Save results to file
 results_path = "./results/results.json"
 evaluator.save_results(results=results, path=results_path)
-print(f"\nDetailed results saved to: {results__path}")
+print(f"\nDetailed results saved to: {results_path}")
