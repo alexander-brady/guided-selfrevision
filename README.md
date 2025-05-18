@@ -1,3 +1,3 @@
-# CS4NLP Project
+# Uncertainty Driven Test-Time Scaling
 
-Uncertainty driven inference.
+Improving the reasoning capabilities of large language models using uncertainty-aware inference techniques.

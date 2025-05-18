@@ -1,5 +1,12 @@
 __pycache__/
 
 venv/
+.venv/
 
-experiments/*
+logs/
+
+experiments/
+cluster/
+
+# Environment variables
+.env
