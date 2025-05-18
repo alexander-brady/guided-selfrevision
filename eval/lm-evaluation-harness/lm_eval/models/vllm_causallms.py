@@ -190,7 +190,7 @@ class VLLM(TemplateLM):
     @property
     def tokenizer_name(self) -> str:
         return self.tokenizer.name_or_path.replace("/", "__")
-[B
+
     def tok_encode(
         self,
         string: Union[str, List[str]],
