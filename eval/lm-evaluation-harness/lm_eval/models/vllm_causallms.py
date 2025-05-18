@@ -508,7 +508,7 @@ class VLLM(TemplateLM):
         # Process all_gen_kwargs to replace thinking_n_ignore_str with a randomly selected edging token
 
         for i, req in enumerate(requests):
-            context, gen_kwargs = req.args
+            context, gen_kwargs = req.arguments
 
             # Check if thinking_n_ignore_str is a list or comma-separated string
             if "thinking_n_ignore_str" in gen_kwargs:
