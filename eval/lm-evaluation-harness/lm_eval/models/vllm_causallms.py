@@ -190,7 +190,7 @@ class VLLM(TemplateLM):
     @property
     def tokenizer_name(self) -> str:
         return self.tokenizer.name_or_path.replace("/", "__")
-
+[B
     def tok_encode(
         self,
         string: Union[str, List[str]],
@@ -527,7 +527,7 @@ class VLLM(TemplateLM):
                     gen_kwargs["thinking_n_ignore_str"] = selected_signal
 
                     # Update the request with modified kwargs
-                    requests[i].args = (context, gen_kwargs)
+                    requests[i].arguments = (context, gen_kwargs)
         # ADDED CODE BLOCK END
 
 
