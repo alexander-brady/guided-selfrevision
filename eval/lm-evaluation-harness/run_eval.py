@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 from lm_eval import evaluator, tasks
+import os
+
+os.makedir("./results", exist_ok=True)
 
 # Define your model arguments
 model_args = {
@@ -16,8 +19,6 @@ gen_kwargs = {
     "max_tokens_thinking": 1800
 }
 
-# Define output path
-output_path = "./results"
 
 # Run the evaluation
 print("Starting evaluation...")
@@ -27,11 +28,15 @@ results = evaluator.simple_evaluate(
     tasks=["aime24_nofigures", "openai_math"],
     batch_size="auto",
     log_samples=True,
-    output_path=output_path,
     generation_kwargs=gen_kwargs
 )
 
 # Print results table
 print("\nResults Summary:")
 print(evaluator.make_table(results))
-print(f"\nDetailed results saved to: {output_path}")
+
+# Save results to file
+results_path = "./results/results.json"
+evaluator.save_results(results, results_path)
+print(f"\nDetailed results saved to: {results__path}")
+
