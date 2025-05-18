@@ -497,10 +497,39 @@ class VLLM(TemplateLM):
 
         return loglikelihoods
 
+## generate_until modified to accept a list 
     def generate_until(
         self, requests: List[Instance], disable_tqdm: bool = False
     ) -> List[str]:
+    
         res = []
+        
+        # ADDED CODE BLOCK START: Handle multiple continuation signals
+        # Process all_gen_kwargs to replace thinking_n_ignore_str with a randomly selected edging token
+
+        for i, req in enumerate(requests):
+            context, gen_kwargs = req.args
+
+            # Check if thinking_n_ignore_str is a list or comma-separated string
+            if "thinking_n_ignore_str" in gen_kwargs:
+                signals = gen_kwargs["thinking_n_ignore_str"]
+
+                # Handle comma-separated string
+                if isinstance(signals, str) and ";" in signals:
+                    signals = [s.strip() for s in signals.split(",")]
+
+                # Handle list case
+                if isinstance(signals, list) and len(signals) > 0:
+                    import random
+                    # Choose random signal for this instance
+                    selected_signal = random.choice(signals)
+                    # Replace with the selected signal
+                    gen_kwargs["thinking_n_ignore_str"] = selected_signal
+
+                    # Update the request with modified kwargs
+                    requests[i].args = (context, gen_kwargs)
+        # ADDED CODE BLOCK END
+
 
         # batch tokenize contexts
         context, all_gen_kwargs = zip(*(req.args for req in requests))
