@@ -515,8 +515,8 @@ class VLLM(TemplateLM):
                 signals = gen_kwargs["thinking_n_ignore_str"]
 
                 # Handle comma-separated string
-                if isinstance(signals, str) and ";" in signals:
-                    signals = [s.strip() for s in signals.split(",")]
+                if isinstance(signals, str) and "###" in signals:
+                    signals = [s.strip() for s in signals.split("###")]
 
                 # Handle list case
                 if isinstance(signals, list) and len(signals) > 0:
