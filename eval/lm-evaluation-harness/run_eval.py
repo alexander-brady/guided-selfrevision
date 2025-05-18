@@ -14,11 +14,7 @@ model_args = {
 }
 
 # Define generation parameters
-gen_kwargs = {
-    "max_gen_toks": 2000,
-    "max_tokens_thinking": 1800
-}
-
+gen_kwargs_str = "max_gen_toks=2000,max_tokens_thinking=1800"
 
 # Run the evaluation
 print("Starting evaluation...")
@@ -28,7 +24,7 @@ results = evaluator.simple_evaluate(
     tasks=["aime24_nofigures", "openai_math"],
     batch_size="auto",
     log_samples=True,
-    gen_kwargs=gen_kwargs
+    gen_kwargs=gen_kwargs_str
 )
 
 # Print results table
@@ -39,4 +35,3 @@ print(evaluator.make_table(results))
 results_path = "./results/results.json"
 evaluator.save_results(results=results, path=results_path)
 print(f"\nDetailed results saved to: {results__path}")
-
