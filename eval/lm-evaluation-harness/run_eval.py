@@ -2,7 +2,7 @@
 from lm_eval import evaluator, tasks
 import os
 
-os.makedir("./results", exist_ok=True)
+os.makedirs("./results", exist_ok=True)
 
 # Define your model arguments
 model_args = {
