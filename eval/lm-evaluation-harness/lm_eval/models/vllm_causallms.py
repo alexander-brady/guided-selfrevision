@@ -515,9 +515,10 @@ class VLLM(TemplateLM):
                 signals = gen_kwargs["thinking_n_ignore_str"]
 
                 # Handle comma-separated string
-                if isinstance(signals, str) and ";" in signals:
-                    signals = [s.strip() for s in signals.split(",")]
+                if isinstance(signals, str) and "###" in signals:
+                    signals = [s.strip() for s in signals.split("###")]
 
+                # test 
                 # Handle list case
                 if isinstance(signals, list) and len(signals) > 0:
                     import random
@@ -527,7 +528,7 @@ class VLLM(TemplateLM):
                     gen_kwargs["thinking_n_ignore_str"] = selected_signal
 
                     # Update the request with modified kwargs
-                    requests[i].args = (context, gen_kwargs)
+                    requests[i].arguments = (context, gen_kwargs)
         # ADDED CODE BLOCK END
 
 
