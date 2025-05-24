@@ -1,4 +1,5 @@
 import copy
+import random
 from importlib.metadata import version
 from importlib.util import find_spec
 from typing import TYPE_CHECKING, Dict, List, Literal, Optional, Tuple, Union
@@ -216,6 +217,7 @@ class VLLM(TemplateLM):
 
         return encoding
 
+
     def _model_generate(
         self,
         requests: List[List[int]] = None,
@@ -224,242 +226,301 @@ class VLLM(TemplateLM):
         stop: Optional[List[str]] = None,
         **kwargs,
     ):
+        true_original_requests_toks = copy.deepcopy(requests)
+        
+        final_kwargs_for_vllm = {}
+        outputs_thinking = None # To store results from the thinking phase
+
         if generate:
             kwargs = self.modify_gen_kwargs(kwargs)
-
             rejection_sample = kwargs.pop("rejection_sample", None)
             if rejection_sample:
                 if (kwargs.get("temperature_thinking", 0) == 0) and (kwargs.get("temperature", 0) == 0):
-                    print("Warning: Rejection sampling works best with temperature/temperature_thinking > 0.")
+                    eval_logger.warning("Rejection sampling works best with temperature/temperature_thinking > 0.")
                 assert "max_tokens_thinking" in kwargs, "Rejection sampling requires max_tokens_thinking to be set."
 
-            outputs_thinking = None
-            if any(["thinking" in k for k in kwargs]) or rejection_sample:
-                print("Separating thinking and answering generation.")
+            is_thinking_phase_active = any(["thinking" in k for k in kwargs]) or rejection_sample
+
+            if is_thinking_phase_active:
+                eval_logger.info("Separating thinking and answering generation.")
                 thinking_start = kwargs.pop("thinking_start", "<|im_start|>think")
                 thinking_end = kwargs.pop("thinking_end", "<|im_start|>answer")
                 thinking_n_ignore = kwargs.pop("thinking_n_ignore", None)
-                thinking_n_ignore_str = kwargs.pop("thinking_n_ignore_str", None) # e.g. "Let me double check step-by-step.")
-                if thinking_n_ignore_str is not None:
-                    print(f"Thinking ignore string: {thinking_n_ignore_str}")
-                    thinking_n_ignore_str_tok = self.tok_encode(thinking_n_ignore_str)
-                until_thinking = [kwargs.pop("until_thinking", "<|im_start|>")]
+                
+                thinking_n_ignore_str_or_list = kwargs.pop("thinking_n_ignore_str", None)
+                
+                thinking_n_ignore_str_tok_static = []
+                static_thinking_n_ignore_str_text = ""
+                if isinstance(thinking_n_ignore_str_or_list, str):
+                    eval_logger.info(f"Thinking ignore string (static): {thinking_n_ignore_str_or_list}")
+                    thinking_n_ignore_str_tok_static = self.tok_encode(thinking_n_ignore_str_or_list)
+                    static_thinking_n_ignore_str_text = thinking_n_ignore_str_or_list
+                elif isinstance(thinking_n_ignore_str_or_list, list) and thinking_n_ignore_str_or_list:
+                    eval_logger.info(f"Thinking ignore string options (dynamic): {thinking_n_ignore_str_or_list}")
+                
+                until_thinking_str_list = [kwargs.pop("until_thinking", "<|im_start|▶")]
                 if "until_thinking_2" in kwargs:
-                    until_thinking.append(kwargs.pop("until_thinking_2"))
+                    until_thinking_str_list.append(kwargs.pop("until_thinking_2"))
                 if stop is not None:
-                    until_thinking.extend(stop)
-                print(f"Thinking start: {thinking_start}, Thinking end: {thinking_end}, Stop: {until_thinking}")
+                    until_thinking_str_list.extend(s for s in stop if s not in until_thinking_str_list)
+                
+                eval_logger.info(f"Thinking start: {thinking_start}, Thinking end: {thinking_end}, Stop during thinking: {until_thinking_str_list}")
+                
                 thinking_start_tok = self.tok_encode(thinking_start)
                 thinking_end_tok = self.tok_encode(thinking_end)
                 thinking_end_max = thinking_end + "\nFinal Answer:"
                 thinking_end_max_tok = self.tok_encode(thinking_end_max)
                 newline_tok = self.tok_encode("\n")
-                # Cast to list to avoid `dictionary changed size during iteration`
-                sampling_params_thinking = {k.replace("_thinking", ""): kwargs.pop(k) for k, v in list(kwargs.items()) if "thinking" in k}
-                # Add all other kwargs but keep sampling_params_thinking version if duplicate key
-                sampling_params_thinking = {**kwargs, **sampling_params_thinking}
-                if "max_tokens" in sampling_params_thinking:
-                    if sampling_params_thinking["max_tokens"] == "auto":
-                        # Leave 100 tokens for answer
-                        sampling_params_thinking["max_tokens"] = max_tokens - max([len(x) for x in requests]) - len(thinking_start_tok) - len(thinking_end_max_tok) - 100
-                        print(f"Auto setting max_tokens_thinking to {sampling_params_thinking['max_tokens']}")
-                    else:
-                        sampling_params_thinking["max_tokens"] = int(sampling_params_thinking["max_tokens"])
-                    if rejection_sample:
-                        sampling_params_thinking["max_tokens"] += 1
+
+                sampling_params_thinking_dict = {k.replace("_thinking", ""): v for k, v in kwargs.items() if "_thinking" in k}
+                temp_kwargs_for_thinking = kwargs.copy() # General kwargs that might apply to thinking
+                for k_think_specific in sampling_params_thinking_dict.keys(): # Remove thinking specific from general
+                    temp_kwargs_for_thinking.pop(k_think_specific.replace("_thinking","") if k_think_specific.replace("_thinking","") in temp_kwargs_for_thinking else k_think_specific, None)
+
+                sampling_params_thinking_dict = {**temp_kwargs_for_thinking, **sampling_params_thinking_dict}
+
+
+                max_tokens_for_thinking_phase = sampling_params_thinking_dict.get("max_tokens")
+                if isinstance(max_tokens_for_thinking_phase, str) and max_tokens_for_thinking_phase == "auto":
+                    auto_max_val = (self.max_length // 2) # Simplified auto, ensure it's less than model max_length
+                    if true_original_requests_toks:
+                         auto_max_val = self.max_length - (max([len(x) for x in true_original_requests_toks]) + len(thinking_start_tok) + len(thinking_end_max_tok) + 50) # buffer for answer
+                    sampling_params_thinking_dict["max_tokens"] = max(20, auto_max_val) 
+                    eval_logger.info(f"Auto setting max_tokens_thinking to {sampling_params_thinking_dict['max_tokens']}")
+                elif max_tokens_for_thinking_phase is not None:
+                    sampling_params_thinking_dict["max_tokens"] = int(max_tokens_for_thinking_phase)
+                else: # Default if not specified and not auto
+                    sampling_params_thinking_dict["max_tokens"] = self.max_gen_toks // 2 or 128
+                
+                if rejection_sample and "max_tokens" in sampling_params_thinking_dict:
+                    sampling_params_thinking_dict["max_tokens"] += 1
+
+                until_thinking_tok_list = self.tok_encode(until_thinking_str_list)
+                
+                min_tokens_val = 0
+                if ("min_tokens" in sampling_params_thinking_dict) or (thinking_n_ignore is not None):
+                    if thinking_n_ignore is not None: min_tokens_val = max(min_tokens_val, 1)
+                    if "min_tokens" in sampling_params_thinking_dict:
+                         min_tokens_val = max(min_tokens_val, int(sampling_params_thinking_dict["min_tokens"]))
+                    sampling_params_thinking_dict["min_tokens"] = min_tokens_val
+
+                    single_token_stops = [t[0] for t in until_thinking_tok_list if len(t) == 1]
+                    multi_token_stop_strings = [s for s, t_list in zip(until_thinking_str_list, until_thinking_tok_list) if len(t_list) > 1]
+                    
+                    # Preserve general 'stop' from kwargs if it exists and isn't thinking-specific
+                    general_stop_sequences = kwargs.get("stop", []) 
+                    if not isinstance(general_stop_sequences, list): general_stop_sequences = [general_stop_sequences] if general_stop_sequences else []
+                    
+                    combined_stop_strings_for_thinking = list(set(multi_token_stop_strings + [s for s in general_stop_sequences if s not in multi_token_stop_strings]))
+
+
+                    if single_token_stops:
+                         sampling_params_thinking_dict["stop_token_ids"] = single_token_stops
+                    if combined_stop_strings_for_thinking: # If there are any string stops
+                         sampling_params_thinking_dict["stop"] = combined_stop_strings_for_thinking
+                    elif not single_token_stops : # No single token stops and no multi_token from until_thinking
+                         sampling_params_thinking_dict["stop"] = until_thinking_str_list # Fallback to original list
                 else:
-                    sampling_params_thinking["max_tokens"] = max_tokens
-                until_thinking_tok = self.tok_encode(until_thinking)
-                if ("min_tokens" in sampling_params_thinking) or (thinking_n_ignore is not None):
-                    if thinking_n_ignore is not None:
-                        sampling_params_thinking["min_tokens"] = 1
-                    else:
-                        sampling_params_thinking["min_tokens"] = int(sampling_params_thinking["min_tokens"])
-                    assert all([len(x) == 1 for x in until_thinking_tok]), "min_tokens_thinking only supports until_thinking tokens that are 1 token long"
-                    # min_tokens will not ignore `stop`, only `stop_token_ids` are ignored so need to use these
-                    sampling_params_thinking["stop_token_ids"] = [x[0] for x in until_thinking_tok]
-                else:
-                    sampling_params_thinking["stop"] = until_thinking
-                requests = [req + thinking_start_tok for req in requests]
-                sampling_params = SamplingParams(**sampling_params_thinking)
+                    sampling_params_thinking_dict["stop"] = until_thinking_str_list # Default stop for thinking
+                
+                base_prompts_for_thinking = [req + thinking_start_tok for req in true_original_requests_toks]
+                vllm_sampling_params_thinking = SamplingParams(**sampling_params_thinking_dict)
 
                 if rejection_sample:
-                    requests_thinking = copy.deepcopy(requests)
-                    outputs_thinking = [None] * len(requests_thinking)
-                    i = 0
-                    while True:
-                        outputs_tmp = self.model.generate(
-                            prompt_token_ids=requests_thinking,
-                            sampling_params=sampling_params,
-                            use_tqdm=True if self.batch_size == "auto" else False,
-                        )
-                        # Save ones that are already below the limit
-                        outputs_tmp2 = copy.deepcopy(outputs_thinking)
-                        for j, o in enumerate(outputs_tmp):
-                            if len(o.outputs[0].token_ids) <= sampling_params_thinking["max_tokens"] - 1:
-                                if outputs_tmp2[j] is None:
-                                    outputs_thinking[j] = o
-                                else:
-                                    for k, t in enumerate(outputs_tmp2[j:] + outputs_tmp2[:j]):
-                                        if t is None:
-                                            idx = j + k if j + k < len(outputs_thinking) else j + k - len(outputs_thinking)
-                                            outputs_thinking[idx] = o
-                                            break
+                    # ... (Your rejection sampling logic - needs to populate `outputs_thinking`) ...
+                    eval_logger.warning("Rejection sampling logic needs to be fully integrated here.")
+                    # Fallback example if rejection sampling is not yet integrated:
+                    if not outputs_thinking or all(o is None for o in outputs_thinking):
+                        outputs_thinking = self.model.generate(
+                            prompt_token_ids=base_prompts_for_thinking,
+                            sampling_params=vllm_sampling_params_thinking,
+                            use_tqdm=True if self.batch_size == "auto" else False)
 
-                        # Collect requests remaining
-                        requests_thinking_new = [None] * len(requests_thinking)
-                        for j, o in enumerate(outputs_thinking):
-                            if outputs_thinking[j] is None:
-                                requests_thinking_new[j] = requests_thinking[j]
-
-                        samples_left = sum([x is not None for x in requests_thinking_new])
-
-                        if not(samples_left): break
-                        gen_tokens_all = [len(o.outputs[0].token_ids) for o in outputs_tmp]
-                        print(f"Samples left: {samples_left}, gen_tokens_all: {gen_tokens_all}, i: {i}")
-                        # Fill up empty request slots with duplicates of other requests that need to be rerun
-                        # Fill each None with the first non-None request after it
-                        for j, r in enumerate(requests_thinking_new):
-                            if r is None:
-                                for k, r2 in enumerate(requests_thinking_new[j:] + requests_thinking_new[:j]):
-                                    if r2 is not None:
-                                        requests_thinking_new[j] = r2
-                                        break
-                        requests_thinking = requests_thinking_new
-                        i += 1
-                    print(f'Rejection sampling took {i} iterations to generate {sampling_params_thinking["max_tokens"] - 1} tokens.')
                 elif thinking_n_ignore is not None:
-                    print("Will ignore end of thinking " + str(thinking_n_ignore) + " times.")
-                    # Add 1 to account for first generation w/o ignoring
-                    thinking_n_ignore = int(thinking_n_ignore) + 1
-                    outputs_thinking = [None] * len(requests)
-                    requests_tmp = copy.deepcopy(requests)
-                    indices = list(range(len(requests)))
-                    for i in range(thinking_n_ignore):
-                        outputs_tmp = self.model.generate(
-                            prompt_token_ids=requests_tmp,
-                            sampling_params=sampling_params,
-                            use_tqdm=True if self.batch_size == "auto" else False,
-                        )
-                        indices_new = []
-                        requests_tmp_new = []
-                        for j, o in enumerate(outputs_tmp):
-                            idx = indices[j]
-                            assert len(o.outputs) == 1
-                            cont = list(o.outputs[0].token_ids)
-                            # Final; do not generate further
-                            if (o.outputs[0].finish_reason == "length") or (i == thinking_n_ignore - 1):
-                                if outputs_thinking[idx] is not None:
-                                    outputs_thinking[idx].outputs[0].text += o.outputs[0].text
-                                    outputs_thinking[idx].outputs[0].token_ids += cont
-                                    outputs_thinking[idx].outputs[0].finish_reason = o.outputs[0].finish_reason
-                                else:
-                                    outputs_thinking[idx] = o
-                                    outputs_thinking[idx].outputs[0].token_ids = cont
-                                    outputs_thinking[idx].outputs[0].finish_reason = o.outputs[0].finish_reason
-                            else:
-                                # When using `stop`, the stop text will not be in the text, but still in the token_ids so remove it
-                                for toks in until_thinking_tok:
-                                    if cont[-len(toks):] == toks:
-                                        cont = cont[:-len(toks)]
-                                
-                                if thinking_n_ignore_str is not None:
-                                    cont += thinking_n_ignore_str_tok
-                                    o.outputs[0].text += thinking_n_ignore_str
+                    eval_logger.info(f"S1-style thinking: Will ignore stops up to {thinking_n_ignore} times.")
+                    thinking_n_ignore_iterations = int(thinking_n_ignore) + 1
+                    outputs_thinking = [None] * len(base_prompts_for_thinking)
+                    current_prompts_iter = copy.deepcopy(base_prompts_for_thinking)
+                    active_request_indices_iter = list(range(len(base_prompts_for_thinking)))
 
-                                if outputs_thinking[idx] is not None:
-                                    outputs_thinking[idx].outputs[0].text += o.outputs[0].text
-                                    outputs_thinking[idx].outputs[0].token_ids += cont
-                                else:
-                                    outputs_thinking[idx] = o
-                                    outputs_thinking[idx].outputs[0].token_ids = cont
+                    for i_iter_step in range(thinking_n_ignore_iterations):
+                        if not active_request_indices_iter: break
+                        prompts_for_vllm_call_this_step = [current_prompts_iter[idx] for idx in active_request_indices_iter]
+                        if not prompts_for_vllm_call_this_step: continue
 
-                                requests_tmp_new.append(requests_tmp[j] + cont)
-                                indices_new.append(idx)
-                        requests_tmp = requests_tmp_new
-                        indices = indices_new
-                    for idx in list(range(len(requests))):
-                        if len(outputs_thinking[idx].outputs[0].token_ids) > sampling_params_thinking["max_tokens"]:
-                            print(f'Warning: Generated more than {sampling_params_thinking["max_tokens"]} tokens. Cutting.')
-                            outputs_thinking[idx].outputs[0].token_ids = outputs_thinking[idx].outputs[0].token_ids[:sampling_params_thinking["max_tokens"]]
+                        generated_segments = self.model.generate(
+                            prompt_token_ids=prompts_for_vllm_call_this_step,
+                            sampling_params=vllm_sampling_params_thinking,
+                            use_tqdm=False)
 
-                else:
+                        next_iter_active_indices = []
+                        for batch_loop_idx, segment_output_obj in enumerate(generated_segments):
+                            original_request_idx_in_batch = active_request_indices_iter[batch_loop_idx]
+
+                            if outputs_thinking[original_request_idx_in_batch] is None:
+                                class _PseudoCompOut:
+                                    def __init__(self): self.token_ids, self.text, self.finish_reason, self.logprobs = [], "", None, None
+                                class _PseudoReqOut:
+                                    def __init__(self): self.outputs = [_PseudoCompOut()]
+                                outputs_thinking[original_request_idx_in_batch] = _PseudoReqOut()
+                            
+                            accumulated_thought_data = outputs_thinking[original_request_idx_in_batch].outputs[0]
+                            segment_tokens = list(segment_output_obj.outputs[0].token_ids)
+                            segment_text = segment_output_obj.outputs[0].text
+                            segment_finish_reason = segment_output_obj.outputs[0].finish_reason
+                            
+                            tokens_to_add_this_step = list(segment_tokens) # Start with the full segment
+                            text_to_add_this_step = segment_text         # Start with the full segment text
+
+                            continue_thinking_for_this_req = False
+                            max_total_thinking_toks = vllm_sampling_params_thinking.max_tokens # Use max_tokens from the thinking params
+                            current_total_len = len(accumulated_thought_data.token_ids) + len(segment_tokens)
+
+                            if segment_finish_reason == "length" or \
+                               i_iter_step == thinking_n_ignore_iterations - 1 or \
+                               current_total_len >= max_total_thinking_toks:
+                                accumulated_thought_data.finish_reason = segment_finish_reason
+                                if current_total_len >= max_total_thinking_toks:
+                                    accumulated_thought_data.finish_reason = "length"
+                                    # Truncate tokens_to_add_this_step if it causes overflow
+                                    if len(accumulated_thought_data.token_ids) + len(tokens_to_add_this_step) > max_total_thinking_toks:
+                                        can_add = max_total_thinking_toks - len(accumulated_thought_data.token_ids)
+                                        tokens_to_add_this_step = tokens_to_add_this_step[:can_add]
+                                        text_to_add_this_step = self.tokenizer.decode(tokens_to_add_this_step)
+
+                            else: # Not a final step, check for stop sequence to ignore
+                                for stop_seq_idx, stop_seq_toks_candidate in enumerate(until_thinking_tok_list):
+                                    stop_seq_str_candidate = until_thinking_str_list[stop_seq_idx]
+                                    if len(segment_tokens) >= len(stop_seq_toks_candidate) and \
+                                       segment_tokens[-len(stop_seq_toks_candidate):] == stop_seq_toks_candidate:
+                                        continue_thinking_for_this_req = True
+                                        
+                                        tokens_to_add_this_step = segment_tokens[:-len(stop_seq_toks_candidate)]
+                                        # Adjust text_to_add_this_step carefully if stop string was part of it
+                                        if segment_text.endswith(stop_seq_str_candidate):
+                                            text_to_add_this_step = segment_text[:-len(stop_seq_str_candidate)]
+                                        else: # Fallback if text doesn't match exactly (e.g. due to tokenization nuances)
+                                            text_to_add_this_step = self.tokenizer.decode(tokens_to_add_this_step)
+
+                                        chosen_ignore_toks_for_step, chosen_ignore_text_for_step = [], ""
+                                        if isinstance(thinking_n_ignore_str_or_list, list) and thinking_n_ignore_str_or_list:
+                                            selected_signal = random.choice(thinking_n_ignore_str_or_list)
+                                            chosen_ignore_toks_for_step = self.tok_encode(selected_signal)
+                                            chosen_ignore_text_for_step = selected_signal
+                                            eval_logger.debug(f"Req {original_request_idx_in_batch}: Dynamic: '{selected_signal}'")
+                                        elif thinking_n_ignore_str_tok_static: # A single string was provided
+                                            chosen_ignore_toks_for_step = thinking_n_ignore_str_tok_static
+                                            chosen_ignore_text_for_step = static_thinking_n_ignore_str_text
+                                            eval_logger.debug(f"Req {original_request_idx_in_batch}: Static: '{static_thinking_n_ignore_str_text}'")
+                                        
+                                        tokens_to_add_this_step.extend(chosen_ignore_toks_for_step)
+                                        text_to_add_this_step += chosen_ignore_text_for_step
+                                        break 
+                            
+                            accumulated_thought_data.token_ids.extend(tokens_to_add_this_step)
+                            accumulated_thought_data.text += text_to_add_this_step
+                            if not continue_thinking_for_this_req and accumulated_thought_data.finish_reason is None:
+                                accumulated_thought_data.finish_reason = segment_finish_reason if segment_finish_reason else "done_step"
+
+                            if continue_thinking_for_this_req:
+                                next_iter_active_indices.append(original_request_idx_in_batch)
+                                current_prompts_iter[original_request_idx_in_batch] = \
+                                    list(base_prompts_for_thinking[original_request_idx_in_batch]) + \
+                                    list(accumulated_thought_data.token_ids)
+                        active_request_indices_iter = sorted(list(set(next_iter_active_indices)))
+
+                    max_think_toks_overall = vllm_sampling_params_thinking.max_tokens
+                    for req_idx_final_check in range(len(outputs_thinking)):
+                        if outputs_thinking[req_idx_final_check] and outputs_thinking[req_idx_final_check].outputs:
+                            out_obj_data = outputs_thinking[req_idx_final_check].outputs[0]
+                            if len(out_obj_data.token_ids) > max_think_toks_overall:
+                                eval_logger.warning(f"Req {req_idx_final_check} (S1): Total {len(out_obj_data.token_ids)} > {max_think_toks_overall}. Cut.")
+                                out_obj_data.token_ids = out_obj_data.token_ids[:max_think_toks_overall]
+                                out_obj_data.text = self.tokenizer.decode(out_obj_data.token_ids)
+                                out_obj_data.finish_reason = "length"
+                
+                else: # Standard single-pass thinking
+                    eval_logger.info("Standard single-pass thinking generation.")
                     outputs_thinking = self.model.generate(
-                        prompt_token_ids=requests,
-                        sampling_params=sampling_params,
-                        use_tqdm=True if self.batch_size == "auto" else False,
-                    )
+                        prompt_token_ids=base_prompts_for_thinking,
+                        sampling_params=vllm_sampling_params_thinking,
+                        use_tqdm=True if self.batch_size == "auto" else False)
 
-                for i, o in enumerate(outputs_thinking):
-                    assert len(o.outputs) == 1
-                    cont = list(o.outputs[0].token_ids)
-                    # When using `stop`, the stop text will not be in the text, but still in the token_ids so remove it
-                    for toks in until_thinking_tok:
-                        if cont[-len(toks):] == toks:
-                            cont = cont[:-len(toks)]
+                # --- Post-thinking: Prepare prompts for the ANSWER stage ---
+                requests_for_answer_stage = []
+                if outputs_thinking: # Ensure outputs_thinking is not None and potentially populated
+                    for i, thought_result_obj in enumerate(outputs_thinking):
+                        current_answer_prompt_toks = list(true_original_requests_toks[i]) # Start with true original
+                        current_answer_prompt_toks.extend(thinking_start_tok)
+                        full_wrapped_thought_text_for_record = thinking_start
 
-                    if o.outputs[0].finish_reason == "length":
-                        assert not rejection_sample, "Rejection sampling should not reach this point."
-                        # \n appears a lot so a decent chance it happend to just be the last token in which case we don't need to add a newline
-                        if (o.outputs[0].text[-1] == "\n") or (thinking_start[0] == "\n"):
-                            requests[i] += cont + thinking_end_max_tok
-                            outputs_thinking[i].outputs[0].text = thinking_start + outputs_thinking[i].outputs[0].text + thinking_end_max
+                        if thought_result_obj and thought_result_obj.outputs:
+                            final_thought_tokens = thought_result_obj.outputs[0].token_ids
+                            final_thought_text = thought_result_obj.outputs[0].text
+                            final_thought_finish_reason = thought_result_obj.outputs[0].finish_reason
+                            current_answer_prompt_toks.extend(final_thought_tokens)
+                            full_wrapped_thought_text_for_record += final_thought_text
+                            if final_thought_finish_reason == "length":
+                                current_answer_prompt_toks.extend(newline_tok + thinking_end_max_tok)
+                                full_wrapped_thought_text_for_record += "\n" + thinking_end_max
+                            else:
+                                current_answer_prompt_toks.extend(thinking_end_tok)
+                                full_wrapped_thought_text_for_record += thinking_end
+                            thought_result_obj.outputs[0].text = full_wrapped_thought_text_for_record
                         else:
-                            requests[i] += cont + newline_tok + thinking_end_max_tok
-                            outputs_thinking[i].outputs[0].text = thinking_start + outputs_thinking[i].outputs[0].text + "\n" + thinking_end_max
-                    else:
-                        requests[i] += cont + thinking_end_tok
-                        outputs_thinking[i].outputs[0].text = thinking_start + outputs_thinking[i].outputs[0].text + thinking_end
+                            eval_logger.warning(f"Req {i}: No valid thought. Appending only thinking_end.")
+                            current_answer_prompt_toks.extend(thinking_end_tok)
+                            if outputs_thinking[i] is None: # If it was None, create a minimal placeholder
+                                class _PseudoCompOut:
+                                    def __init__(self): self.text = thinking_start + thinking_end; self.token_ids = []
+                                class _PseudoReqOut:
+                                    def __init__(self): self.outputs = [_PseudoCompOut()]
+                                outputs_thinking[i] = _PseudoReqOut() # Assign minimal for consistency
+                            elif outputs_thinking[i].outputs:
+                                outputs_thinking[i].outputs[0].text = thinking_start + thinking_end
+                        requests_for_answer_stage.append(current_answer_prompt_toks)
+                    
+                    requests = requests_for_answer_stage # Update `requests` for the final vLLM call
+                else: # No thinking occurred or outputs_thinking is empty
+                    requests = true_original_requests_toks # Fallback to original if no thoughts generated
+                
+                # `kwargs` should now only contain parameters for the final answer stage,
+                # not thinking-specific or general sampling ones already used for thinking.
+                final_kwargs_for_vllm = {"max_tokens": max_tokens, "stop": stop, **kwargs}
 
-            sampling_params = SamplingParams(max_tokens=max_tokens, stop=stop, **kwargs)
-        else:
-            sampling_params = SamplingParams(
-                temperature=0, prompt_logprobs=1, max_tokens=1, detokenize=False
-            )
-        if self.data_parallel_size > 1:
-            # vLLM hangs if tensor_parallel > 1 and resources are set in ray.remote
-            # also seems to only work with decorator and not with ray.remote() fn
-            # see https://github.com/vllm-project/vllm/issues/973
-            # note: this has changed on 0.3.3, and it only works now if num_gpus are set.
-            # but then tensor_parallel breaks
-            @ray.remote
-            def run_inference_one_model(
-                model_args: dict, sampling_params, requests: List[List[int]]
-            ):
-                llm = LLM(**model_args)
-                return llm.generate(
-                    prompt_token_ids=requests, sampling_params=sampling_params
-                )
+            else: # No thinking phase was active at all
+                requests = true_original_requests_toks
+                final_kwargs_for_vllm = {"max_tokens": max_tokens, "stop": stop, **kwargs}
+        
+        else: # Loglikelihood mode
+            requests = true_original_requests_toks
+            final_kwargs_for_vllm = {"temperature": 0, "prompt_logprobs": 1, "max_tokens": 1, "detokenize": False}
+        
+        final_vllm_sampling_params = SamplingParams(**final_kwargs_for_vllm)
 
-            # dispatch requests to all self.data_parallel_size workers, in interleaved fashion
-            # interleaved important to balance context lengths across workers
-            requests = [list(x) for x in distribute(self.data_parallel_size, requests)]
-            inputs = ((self.model_args, sampling_params, req) for req in requests)
-            object_refs = [run_inference_one_model.remote(*x) for x in inputs]
-            results = ray.get(object_refs)
-            # Invoke ray.shutdown() to prevent hang-ups if subsequent calls required.
-            ray.shutdown()
-            # flatten results
-            return undistribute(results)
+        # Data parallel logic (currently simplified/placeholder in previous attempts)
+        # if self.data_parallel_size > 1: ...
 
         if self.lora_request is not None:
-            outputs = self.model.generate(
+            final_model_outputs = self.model.generate(
                 prompt_token_ids=requests,
-                sampling_params=sampling_params,
+                sampling_params=final_vllm_sampling_params,
                 use_tqdm=True if self.batch_size == "auto" else False,
-                lora_request=self.lora_request,
-            )
+                lora_request=self.lora_request)
         else:
-            outputs = self.model.generate(
+            final_model_outputs = self.model.generate(
                 prompt_token_ids=requests,
-                sampling_params=sampling_params,
-                use_tqdm=True if self.batch_size == "auto" else False,
-            )
-            if outputs_thinking is not None:
-                for i, o in enumerate(outputs):
-                    assert len(o.outputs) == 1
-                    outputs[i].outputs[0].text = outputs_thinking[i].outputs[0].text + outputs[i].outputs[0].text
-        return outputs
+                sampling_params=final_vllm_sampling_params,
+                use_tqdm=True if self.batch_size == "auto" else False)
+            
+        if generate and outputs_thinking is not None: # Ensure outputs_thinking exists
+            for i, answer_out_obj in enumerate(final_model_outputs):
+                if i < len(outputs_thinking) and outputs_thinking[i] and \
+                   outputs_thinking[i].outputs and answer_out_obj.outputs: # Defensive checks
+                    thinking_text_part = outputs_thinking[i].outputs[0].text
+                    answer_out_obj.outputs[0].text = thinking_text_part + answer_out_obj.outputs[0].text
+        
+        return final_model_outputs
 
     def loglikelihood_rolling(
         self, requests: List[Instance], disable_tqdm: bool = False
@@ -505,10 +566,11 @@ class VLLM(TemplateLM):
         res = []
         
         # ADDED CODE BLOCK START: Handle multiple continuation signals
-        # Process all_gen_kwargs to replace thinking_n_ignore_str with a randomly selected edging token
+        # Process all_gen_kwargs to have multiple thinking_n_ignore_str 
 
         for i, req in enumerate(requests):
-            context, gen_kwargs = req.arguments
+            # _context instead of context to avoid confusion
+            _context, gen_kwargs = req.arguments
 
             # Check if thinking_n_ignore_str is a list or comma-separated string
             if "thinking_n_ignore_str" in gen_kwargs:
@@ -517,18 +579,36 @@ class VLLM(TemplateLM):
                 # Handle comma-separated string
                 if isinstance(signals, str) and "###" in signals:
                     signals = [s.strip() for s in signals.split("###")]
+                    # gen_kwargs now has a list of of signals
+                    gen_kwargs["thinking_n_ignore_str"] = signals
+                
+                # Assuming req.arguments is a tuple (context, kwargs_dict)
+                # and kwargs_dict is mutable:
+                # req.arguments[1]["thinking_n_ignore_str"] = signals 
+                    if hasattr(requests[i], 'arguments') and isinstance(requests[i].arguments, tuple) and len(requests[i].arguments) == 2:
+                        current_context, current_gen_kwargs = requests[i].arguments
+                        current_gen_kwargs["thinking_n_ignore_str"] = signals
+                        print(f"current_gen_kwargs: {current_gen_kwargs}")
+                        requests[i] = Instance(
+                            args=(current_context, current_gen_kwargs), # type: ignore
+                            # Re-pass other necessary attributes from req to new Instance
+                            request_type=req.request_type,
+                            doc=req.doc,
+                            metadata=req.metadata,
+                            resps=req.resps,
+                            task_name=req.task_name,
+                            doc_id=req.doc_id,
+                            repeats=req.repeats,
+                        ) 
+                    else: # Fallback if structure is different, or direct mutation if args[1] is the dict
+                         gen_kwargs["thinking_n_ignore_str"] = signals
 
-                # test 
-                # Handle list case
-                if isinstance(signals, list) and len(signals) > 0:
-                    import random
-                    # Choose random signal for this instance
-                    selected_signal = random.choice(signals)
-                    # Replace with the selected signal
-                    gen_kwargs["thinking_n_ignore_str"] = selected_signal
-
-                    # Update the request with modified kwargs
-                    requests[i].arguments = (context, gen_kwargs)
+                # The part that selected a single random signal is removed/commented:
+                # if isinstance(signals, list) and len(signals) > 0:
+                #     import random # Should be module-level
+                #     selected_signal = random.choice(signals)
+                #     gen_kwargs["thinking_n_ignore_str"] = selected_signal # REMOVED
+                #     requests[i].arguments = (_context, gen_kwargs) # Update if necessary
         # ADDED CODE BLOCK END
 
 

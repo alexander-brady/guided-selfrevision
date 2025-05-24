@@ -1,5 +1,7 @@
 lm_eval value
 
+
+
 # previous bash command that seemed to work, except for the max tokens issue:
 
 (venv) ubuntu@104-171-203-130:~/cs4nlp/eval/lm-evaluation-harness$ \
@@ -10,7 +12,22 @@ lm_eval --model vllm --model_args arallel_size=2,max_model_len=2048,gpu_memory_u
 
 # connect to cluster
 
+    # Basic SSH command format
     ssh ubuntu@<IP-ADDRESS> -i <PATH-TO-YOUR-SSH-KEY>
+    # example
+    #ssh ubuntu@104.171.203.117 -i ./CS4NLP_GPUs.pem
+    ssh ubuntu@104.171.202.48 -i ./CS4NLP_GPUs.pem
+    ssh ubuntu@104.171.202.166 -i ./CS4NLP_GPUs.pem
+
+
+    # generate key 
+    ssh-keygen -t ed25519 -C "your_email@example.com"
+
+    # copy key 
+    cat ~/.ssh/id_ed25519.pub
+
+    # store it to github keys 
+    
 
     # test connection
     ssh -T git@github.com
@@ -18,17 +35,15 @@ lm_eval --model vllm --model_args arallel_size=2,max_model_len=2048,gpu_memory_u
     # From local machine, securely copy your private key to the cluster
     scp -i C:\Users\IT\Desktop\CS4NLP\CS4NLP_GPUs.pem ~/.ssh/id_ed25519 ubuntu@CLUSTER_IP:~/.ssh/
     scp -i C:\Users\IT\Desktop\CS4NLP\CS4NLP_GPUs.pem ~/.ssh/id_ed25519.pub ubuntu@CLUSTER_IP:~/.ssh/
-    # with cluster IP
+
+    # example with cluster IP
     scp -i C:\Users\IT\Desktop\CS4NLP\CS4NLP_GPUs.pem ~/.ssh/id_ed25519 ubuntu@104.171.203.117:~/.ssh/
     scp -i C:\Users\IT\Desktop\CS4NLP\CS4NLP_GPUs.pem ~/.ssh/id_ed25519.pub ubuntu@104.171.203.117:~/.ssh/
 
     # on the cluster, set proper permissions
     ssh -i /path/to/lambda_labs_key.pem ubuntu@CLUSTER_IP "chmod 600 ~/.ssh/id_ed25519"
 
-    # Basic SSH command format
-    ssh ubuntu@<IP-ADDRESS> -i <PATH-TO-YOUR-SSH-KEY>
-    # example
-    ssh ubuntu@104.171.203.117 -i ./CS4NLP_GPUs.pem
+
 
 
 # standard way to launch it 
@@ -52,6 +67,10 @@ lm_eval --model vllm --model_args arallel_size=2,max_model_len=2048,gpu_memory_u
   pip install -e .
   pip install vllm torch
 
+  # add processor and API key
+  export PROCESSOR="gpt-4o-mini"
+  export OPENAI_API_KEY=""
+
   # 4. Run the evaluation with single/multi GPU command
   ... below 
 
@@ -74,43 +93,49 @@ lm_eval --model vllm \
   --log_samples \
   --gen_kwargs max_gen_toks=2000,max_tokens_thinking=1800
 
-# for multiple GPUs
-
-lm_eval --model vllm \
-  --model_args 'pretrained=simplescaling/s1.1-1.5B,tensor_parallel_size=8,max_model_len=2048,gpu_memory_utilization=0.85, \
-thinking_n_ignore_str=\"Wait;Let us reconsider...;Hmm, I should double-check this.;On second thought...; \
-Actually...;Wait, that cannot be right.;Let me verify this calculation.; \
-I need to analyze this from another angle.;Let us try a different approach.; \
-I should break this down further.;Let me work through this step-by-step.; \
-I am not confident in this result yet.;Let me trace through the logic again.; \
-There may be something I am overlooking here.;This deserves more careful analysis.; \
-Let me reason through this systematically.;Is this even right?;Is this correct;Could this be wrong; \
-So, given this and that;Is this the right conclusion?;Is this sound?;Is this a logical conclusion...?\"' \
-  --tasks aime24_nofigures,openai_math \
-  --batch_size auto \
-  --log_samples \
-  --output_path ./results \
-  --gen_kwargs max_gen_toks=2000,max_tokens_thinking=1800
-
 
 # for multiple GPUs
 
-lm_eval --model vllm \
-  --model_args "pretrained=simplescaling/s1.1-1.5B,tensor_parallel_size=8,max_model_len=2048,gpu_memory_utilization=0.85,thinking_n_ignore_str=\"Wait;Let us reconsider...;Hmm, I should double-check this.;On second thought...;Actually...;Wait, that cannot be right.;Let me verify this calculation.;I need to analyze this from another angle.;Let us try a different approach.;I should break this down further.;Let me work through this step-by-step.;I am not confident in this result yet.;Let me trace through the logic again.;There may be something I am overlooking here.;This deserves more careful analysis.;Let me reason through this systematically.;Is this even right?;Is this correct;Could this be wrong;So, given this and that;Is this the right conclusion?;Is this sound?;Is this a logical conclusion...?\"" \
-  --tasks aime24_nofigures,openai_math \
-  --batch_size auto \
-  --log_samples \
-  --output_path ./results \
-  --gen_kwargs max_gen_toks=2000,max_tokens_thinking=1800
 
 # newer version 
 lm_eval --model vllm \
   --model_args "pretrained=simplescaling/s1.1-1.5B,tensor_parallel_size=4,max_model_len=2048,gpu_memory_utilization=0.85" \
+  --tasks gsm8k,aime24_nofigures,openai_math \
+  --batch_size auto \
+  --log_samples \
+  --output_path ./results \
+  --gen_kwargs "max_gen_toks=32768,max_tokens_thinking=1800,thinking_n_ignore_str=\"Wait###Let us perhaps reconsider...###Hmm I should double-check this.###Let me verify this calculation.###I need to analyze this from another angle.###Let me work through this step-by-step.###I am not confident in this result yet.###Let me trace through the logic again.###There may be something I am overlooking here.###This deserves more careful analysis.###Let me reason through this systematically.###Is this even right?###Is this correct###Could this be wrong###So given this and that###Is this the right conclusion?###Is this sound?###Is this a logical conclusion...?\""
+
+# more budget forcing
+lm_eval --model vllm \
+  --model_args "pretrained=simplescaling/s1.1-1.5B,tensor_parallel_size=4,gpu_memory_utilization=0.85" \
+  --tasks gsm8k,aime24_nofigures,openai_math \
+  --batch_size auto \
+  --log_samples \
+  --output_path ./results \
+  --gen_kwargs "max_gen_toks=32768,max_tokens_thinking=auto,thinking_n_ignore_str=\"Wait###Hmm I should double-check this.###Do we need to think more?###Let me verify this calculation.###I need to analyze this from another angle.###Let me work through this step-by-step.###Am I confident in this result?###Let me trace through the logic again.###This deserves more careful analysis.###Let me reason through this systematically.######Is this correct###Could this be wrong###So given this and that###Is this the right conclusion?###Is this sound?###Is this a logical conclusion...?\""
+
+
+
+
+lm_eval --model vllm \
+  --model_args "pretrained=simplescaling/s1.1-1.5B,tensor_parallel_size=4,max_model_len=2048,gpu_memory_utilization=0.85" \
+  --tasks gsm8k,aime24_nofigures,openai_math \
+  --batch_size auto \
+  --log_samples \
+  --output_path ./results \
+  --gen_kwargs "max_gen_toks=2000,max_tokens_thinking=1800,thinking_n_ignore_str=\"Wait need to make sure whether this is right.\""
+
+
+# 24.05 single GPU deployment
+
+lm_eval --model vllm \
+  --model_args "pretrained=simplescaling/s1.1-1.5B,tensor_parallel_size=1,gpu_memory_utilization=0.85" \
   --tasks aime24_nofigures,openai_math \
   --batch_size auto \
   --log_samples \
   --output_path ./results \
-  --gen_kwargs "max_gen_toks=2000,max_tokens_thinking=1800,thinking_n_ignore_str=\"Wait###Let us reconsider...###Hmm I should double-check this.###On second thought...###Actually...###Wait that cannot be right.###Let me verify this calculation.###I need to analyze this from another angle.###Let us try a different approach.###I should break this down further.###Let me work through this step-by-step.###I am not confident in this result yet.###Let me trace through the logic again.###There may be something I am overlooking here.###This deserves more careful analysis.###Let me reason through this systematically.###Is this even right?###Is this correct###Could this be wrong###So given this and that###Is this the right conclusion?###Is this sound?###Is this a logical conclusion...?\""
+  --gen_kwargs "max_gen_toks=32768,max_tokens_thinking=auto,thinking_n_ignore_str=\"Wait###Hmm I should double-check this.###Do we need to think more?###Let me verify this calculation.###I need to analyze this from another angle.###Let me work through this step-by-step.###Am I confident in this result?###Let me trace through the logic again.###This deserves more careful analysis.###Let me reason through this systematically.###Is this correct like this?###Could this be wrong###So given this and that###Is this the right conclusion?###Is this sound?###Is this a logical conclusion...?\""
 
 
 
@@ -129,5 +154,3 @@ lm_eval --model vllm \
 
 
 # git commands
-
-  #

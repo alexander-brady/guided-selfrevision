@@ -235,6 +235,7 @@ def process_results(doc: dict, results: List[str]) -> Dict[str, int]:
         }
 
     if os.getenv("PROCESSOR", "") == "gpt-4o-mini":
+        print("Using gpt-4o-mini")
         sampler = ChatCompletionSampler(model="gpt-4o-mini")
     else:
         print(f"Unknown processor: {os.getenv('PROCESSOR')}; set 'PROCESSOR=gpt-4o-mini' and 'OPENAI_API_KEY=YOUR_KEY' for best results.")

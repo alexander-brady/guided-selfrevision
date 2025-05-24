@@ -344,8 +344,8 @@ def make_table(result_dict, column: str = "results", sort_results: bool = False)
         keys = sorted(keys)
     for k in keys:
         dic = result_dict[column][k]
-        version = result_dict["versions"].get(k, "    N/A")
-        n = str(result_dict.get("n-shot", " ").get(k, " "))
+        version = result_dict["versions"].get(k, "N/A")
+        n = str(result_dict.get("n-shot", {}).get(k, ""))
         higher_is_better = result_dict.get("higher_is_better", {}).get(k, {})
 
         if "alias" in dic:
@@ -361,16 +361,34 @@ def make_table(result_dict, column: str = "results", sort_results: bool = False)
 
             hib = HIGHER_IS_BETTER_SYMBOLS.get(higher_is_better.get(m), "")
 
-            v = "%.4f" % v if isinstance(v, float) else v
+            if isinstance(v, float):
+                v_formatted = "%.4f" % v
+            elif isinstance(v, str) and v.strip().upper() == "N/A":
+                v_formatted = "   N/A"
+            else:
+                v_formatted = str(v)
+
+            se_value_to_display = ""
+            stderr_present_symbol = ""
 
             if m + "_stderr" + "," + f in dic:
                 se = dic[m + "_stderr" + "," + f]
-                se = "   N/A" if se == "N/A" else "%.4f" % se
-                values.append([k, version, f, n, m, hib, v, "±", se])
-            else:
-                values.append([k, version, f, n, m, hib, v, "", ""])
+                stderr_present_symbol = "±"
+                if isinstance(se, str) and se.strip().upper() == "N/A":
+                    se_value_to_display = " N/A"
+                elif isinstance(se, float):
+                    if np.isnan(se) or np.isinf(se):
+                        se_value_to_display = " NaN"
+                    else:
+                        se_value_to_display = "%.4f" % se
+                else:
+                    se_value_to_display = f" {str(se)}"
+            
+            values.append([k, version, f, n, m, hib, v_formatted, stderr_present_symbol, se_value_to_display.lstrip()])
             k = ""
             version = ""
+            n = ""
+            f = ""
     md_writer.value_matrix = values
     latex_writer.value_matrix = values
 

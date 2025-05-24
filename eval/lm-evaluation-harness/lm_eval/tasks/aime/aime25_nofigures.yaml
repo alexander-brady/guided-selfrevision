@@ -19,7 +19,7 @@ metric_list:
     aggregation: mean
     higher_is_better: true
   - metric: extracted_answers
-    aggregation: bypass
+    aggregation: mean
     higher_is_better: true
 metadata:
   version: 1.0
