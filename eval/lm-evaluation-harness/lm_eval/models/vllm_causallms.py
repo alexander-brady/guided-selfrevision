@@ -228,104 +228,159 @@ class VLLM(TemplateLM):
     ):
         true_original_requests_toks = copy.deepcopy(requests)
         
-        final_kwargs_for_vllm = {}
         outputs_thinking = None # To store results from the thinking phase
+        # This will hold parameters for the final vLLM call (either answer or loglikelihood)
+        final_params_for_vllm_call = {}
+
+        # Define known vLLM SamplingParam keys to help filter and build param dicts
+        # This list can be made more comprehensive or a class/module constant if preferred.
+        known_sampling_param_keys = [
+            "n", "best_of", "presence_penalty", "frequency_penalty", "repetition_penalty", 
+            "temperature", "top_p", "top_k", "min_p", "seed", "use_beam_search", 
+            "length_penalty", "early_stopping", "stop", "stop_token_ids", 
+            "include_stop_str_in_output", "ignore_eos", "max_tokens", "min_tokens", 
+            "logprobs", "prompt_logprobs", "skip_special_tokens", "spaces_between_special_tokens"
+        ]
 
         if generate:
-            kwargs = self.modify_gen_kwargs(kwargs)
-            rejection_sample = kwargs.pop("rejection_sample", None)
+            # kwargs is modified by modify_gen_kwargs (e.g. temperature for do_sample=False, skip_special_tokens)
+            # This `kwargs` still contains _thinking suffixed params and other thinking control params.
+            kwargs = self.modify_gen_kwargs(kwargs) 
+
+            rejection_sample = kwargs.get("rejection_sample") # Use .get(), don't pop yet
             if rejection_sample:
-                if (kwargs.get("temperature_thinking", 0) == 0) and (kwargs.get("temperature", 0) == 0):
+                # Check effective temperature for thinking
+                effective_temp_thinking = kwargs.get("temperature_thinking", kwargs.get("temperature", 0))
+                if effective_temp_thinking == 0:
                     eval_logger.warning("Rejection sampling works best with temperature/temperature_thinking > 0.")
-                assert "max_tokens_thinking" in kwargs, "Rejection sampling requires max_tokens_thinking to be set."
+                if "max_tokens_thinking" not in kwargs: # Ensure it's present if rejection_sample is on
+                    raise ValueError("Rejection sampling requires max_tokens_thinking to be set in gen_kwargs.")
 
             is_thinking_phase_active = any(["thinking" in k for k in kwargs]) or rejection_sample
 
             if is_thinking_phase_active:
                 eval_logger.info("Separating thinking and answering generation.")
+                # Pop thinking-specific control flow parameters (not for SamplingParams directly)
                 thinking_start = kwargs.pop("thinking_start", "<|im_start|>think")
                 thinking_end = kwargs.pop("thinking_end", "<|im_start|>answer")
                 thinking_n_ignore = kwargs.pop("thinking_n_ignore", None)
-                
                 thinking_n_ignore_str_or_list = kwargs.pop("thinking_n_ignore_str", None)
                 
-                thinking_n_ignore_str_tok_static = []
+                until_thinking_str_list_input = [kwargs.pop("until_thinking", "<|im_start|▶")]
+                if "until_thinking_2" in kwargs:
+                    until_thinking_str_list_input.append(kwargs.pop("until_thinking_2"))
+                
+                # Incorporate general 'stop' from kwargs into thinking stops, if provided
+                # The 'stop' argument to this function is for the final answer stage.
+                general_stop_for_thinking_phase = kwargs.get("stop", []) 
+                if general_stop_for_thinking_phase is not None:
+                    if isinstance(general_stop_for_thinking_phase, str): 
+                        general_stop_for_thinking_phase = [general_stop_for_thinking_phase]
+                    until_thinking_str_list_input.extend(s for s in general_stop_for_thinking_phase if s not in until_thinking_str_list_input)
+
+                eval_logger.info(f"Thinking start: {thinking_start}, Thinking end: {thinking_end}, Stop during thinking: {until_thinking_str_list_input}")
+                
+                thinking_start_tok = self.tok_encode(thinking_start)
+                thinking_end_tok = self.tok_encode(thinking_end)
+                thinking_end_max = thinking_end + "\\nFinal Answer:" # Escaped newline
+                thinking_end_max_tok = self.tok_encode(thinking_end_max)
+                newline_tok = self.tok_encode("\\n") # Escaped newline
+
+                # --- Prepare parameters for THINKING phase ---
+                sampling_params_for_thinking = {}
+
+                # 1. Populate with general sampling params from kwargs (these will be defaults for thinking)
+                for key in known_sampling_param_keys:
+                    if key in kwargs:
+                        sampling_params_for_thinking[key] = kwargs[key]
+
+                # 2. Override with specific _thinking versions, and POP them from main kwargs
+                # Iterate over a copy of keys as kwargs is being modified
+                thinking_params_to_pop = []
+                for k_original_kwarg in kwargs.keys():
+                    if k_original_kwarg.endswith("_thinking"):
+                        thinking_params_to_pop.append(k_original_kwarg)
+                
+                for k_thinking_param in thinking_params_to_pop:
+                    value = kwargs.pop(k_thinking_param) # Pop from main kwargs
+                    param_name_no_suffix = k_thinking_param.replace("_thinking", "")
+                    if param_name_no_suffix in known_sampling_param_keys:
+                         sampling_params_for_thinking[param_name_no_suffix] = value
+
+                # 3. Specifically handle max_tokens_thinking (in case it wasn't caught above)
+                if "max_tokens_thinking" in kwargs:
+                    val_max_tokens_thinking = kwargs.pop("max_tokens_thinking")
+                    if isinstance(val_max_tokens_thinking, str) and val_max_tokens_thinking.lower() == "auto":
+                        auto_max_val = (self.max_length // 2) 
+                        if true_original_requests_toks:
+                             auto_max_val = self.max_length - (max([len(x) for x in true_original_requests_toks]) + len(thinking_start_tok) + len(thinking_end_max_tok) + 50)
+                        sampling_params_for_thinking["max_tokens"] = max(20, auto_max_val)
+                        eval_logger.info(f"Auto setting max_tokens for thinking to {sampling_params_for_thinking['max_tokens']}")
+                    elif val_max_tokens_thinking is not None:
+                        sampling_params_for_thinking["max_tokens"] = int(val_max_tokens_thinking)
+
+                # 4. Set default max_tokens for thinking if not set
+                if "max_tokens" not in sampling_params_for_thinking:
+                    sampling_params_for_thinking["max_tokens"] = self.max_gen_toks // 2 or 128
+                    eval_logger.info(f"Defaulting max_tokens for thinking to {sampling_params_for_thinking['max_tokens']}")
+                
+                if rejection_sample and "max_tokens" in sampling_params_for_thinking:
+                    sampling_params_for_thinking["max_tokens"] += 1
+
+                # Now, `kwargs` has been cleaned of `_thinking` suffixed params & `max_tokens_thinking`.
+                # `sampling_params_for_thinking` has the correct values for the thinking phase.
+
+                # Handle stop sequences for the thinking phase
+                until_thinking_tok_list_encoded = self.tok_encode(until_thinking_str_list_input)
+                
+                min_tokens_val_thinking = 0
+                # Ensure min_tokens is an int if present or derived
+                current_min_tokens_thinking = sampling_params_for_thinking.get("min_tokens", 0)
+                try:
+                    min_tokens_val_thinking = int(current_min_tokens_thinking)
+                except (ValueError, TypeError):
+                    min_tokens_val_thinking = 0 # Default if conversion fails
+
+                if thinking_n_ignore is not None: 
+                    min_tokens_val_thinking = max(min_tokens_val_thinking, 1)
+                sampling_params_for_thinking["min_tokens"] = min_tokens_val_thinking
+
+
+                single_token_stops_thinking = [t[0] for t in until_thinking_tok_list_encoded if len(t) == 1]
+                multi_token_stop_strings_thinking = [s for s, t_list in zip(until_thinking_str_list_input, until_thinking_tok_list_encoded) if len(t_list) > 1]
+                
+                # Merge with existing stop_token_ids from general params if any
+                final_stop_token_ids_thinking = list(set(sampling_params_for_thinking.get("stop_token_ids", []) + single_token_stops_thinking))
+                if final_stop_token_ids_thinking:
+                    sampling_params_for_thinking["stop_token_ids"] = final_stop_token_ids_thinking
+                
+                # Merge with existing stop strings from general params if any
+                final_stop_strings_thinking = list(set(sampling_params_for_thinking.get("stop", []) + multi_token_stop_strings_thinking))
+                if not final_stop_strings_thinking and not final_stop_token_ids_thinking and until_thinking_str_list_input : 
+                    sampling_params_for_thinking["stop"] = until_thinking_str_list_input # Fallback
+                elif final_stop_strings_thinking:
+                     sampling_params_for_thinking["stop"] = final_stop_strings_thinking
+                
+                # Remove original 'stop' or 'stop_token_ids' if they were only for general and now specific thinking stops are set
+                # This logic depends on whether general 'stop' should always persist or be replaced by specific thinking stops.
+                # The current logic above merges them, giving precedence to specific thinking stops if there's overlap in how VLLM handles multiple stop types.
+
+
+                # Construct SamplingParams for thinking
+                vllm_sampling_params_thinking = SamplingParams(**sampling_params_for_thinking)
+                
+                # Static thinking_n_ignore_str_text and tok_static (from existing lines 252-257, ensure these vars are defined)
                 static_thinking_n_ignore_str_text = ""
+                thinking_n_ignore_str_tok_static = []
                 if isinstance(thinking_n_ignore_str_or_list, str):
                     eval_logger.info(f"Thinking ignore string (static): {thinking_n_ignore_str_or_list}")
                     thinking_n_ignore_str_tok_static = self.tok_encode(thinking_n_ignore_str_or_list)
                     static_thinking_n_ignore_str_text = thinking_n_ignore_str_or_list
                 elif isinstance(thinking_n_ignore_str_or_list, list) and thinking_n_ignore_str_or_list:
                     eval_logger.info(f"Thinking ignore string options (dynamic): {thinking_n_ignore_str_or_list}")
-                
-                until_thinking_str_list = [kwargs.pop("until_thinking", "<|im_start|▶")]
-                if "until_thinking_2" in kwargs:
-                    until_thinking_str_list.append(kwargs.pop("until_thinking_2"))
-                if stop is not None:
-                    until_thinking_str_list.extend(s for s in stop if s not in until_thinking_str_list)
-                
-                eval_logger.info(f"Thinking start: {thinking_start}, Thinking end: {thinking_end}, Stop during thinking: {until_thinking_str_list}")
-                
-                thinking_start_tok = self.tok_encode(thinking_start)
-                thinking_end_tok = self.tok_encode(thinking_end)
-                thinking_end_max = thinking_end + "\nFinal Answer:"
-                thinking_end_max_tok = self.tok_encode(thinking_end_max)
-                newline_tok = self.tok_encode("\n")
 
-                sampling_params_thinking_dict = {k.replace("_thinking", ""): v for k, v in kwargs.items() if "_thinking" in k}
-                temp_kwargs_for_thinking = kwargs.copy() # General kwargs that might apply to thinking
-                for k_think_specific in sampling_params_thinking_dict.keys(): # Remove thinking specific from general
-                    temp_kwargs_for_thinking.pop(k_think_specific.replace("_thinking","") if k_think_specific.replace("_thinking","") in temp_kwargs_for_thinking else k_think_specific, None)
-
-                sampling_params_thinking_dict = {**temp_kwargs_for_thinking, **sampling_params_thinking_dict}
-
-
-                max_tokens_for_thinking_phase = sampling_params_thinking_dict.get("max_tokens")
-                if isinstance(max_tokens_for_thinking_phase, str) and max_tokens_for_thinking_phase == "auto":
-                    auto_max_val = (self.max_length // 2) # Simplified auto, ensure it's less than model max_length
-                    if true_original_requests_toks:
-                         auto_max_val = self.max_length - (max([len(x) for x in true_original_requests_toks]) + len(thinking_start_tok) + len(thinking_end_max_tok) + 50) # buffer for answer
-                    sampling_params_thinking_dict["max_tokens"] = max(20, auto_max_val) 
-                    eval_logger.info(f"Auto setting max_tokens_thinking to {sampling_params_thinking_dict['max_tokens']}")
-                elif max_tokens_for_thinking_phase is not None:
-                    sampling_params_thinking_dict["max_tokens"] = int(max_tokens_for_thinking_phase)
-                else: # Default if not specified and not auto
-                    sampling_params_thinking_dict["max_tokens"] = self.max_gen_toks // 2 or 128
-                
-                if rejection_sample and "max_tokens" in sampling_params_thinking_dict:
-                    sampling_params_thinking_dict["max_tokens"] += 1
-
-                until_thinking_tok_list = self.tok_encode(until_thinking_str_list)
-                
-                min_tokens_val = 0
-                if ("min_tokens" in sampling_params_thinking_dict) or (thinking_n_ignore is not None):
-                    if thinking_n_ignore is not None: min_tokens_val = max(min_tokens_val, 1)
-                    if "min_tokens" in sampling_params_thinking_dict:
-                         min_tokens_val = max(min_tokens_val, int(sampling_params_thinking_dict["min_tokens"]))
-                    sampling_params_thinking_dict["min_tokens"] = min_tokens_val
-
-                    single_token_stops = [t[0] for t in until_thinking_tok_list if len(t) == 1]
-                    multi_token_stop_strings = [s for s, t_list in zip(until_thinking_str_list, until_thinking_tok_list) if len(t_list) > 1]
-                    
-                    # Preserve general 'stop' from kwargs if it exists and isn't thinking-specific
-                    general_stop_sequences = kwargs.get("stop", []) 
-                    if not isinstance(general_stop_sequences, list): general_stop_sequences = [general_stop_sequences] if general_stop_sequences else []
-                    
-                    combined_stop_strings_for_thinking = list(set(multi_token_stop_strings + [s for s in general_stop_sequences if s not in multi_token_stop_strings]))
-
-
-                    if single_token_stops:
-                         sampling_params_thinking_dict["stop_token_ids"] = single_token_stops
-                    if combined_stop_strings_for_thinking: # If there are any string stops
-                         sampling_params_thinking_dict["stop"] = combined_stop_strings_for_thinking
-                    elif not single_token_stops : # No single token stops and no multi_token from until_thinking
-                         sampling_params_thinking_dict["stop"] = until_thinking_str_list # Fallback to original list
-                else:
-                    sampling_params_thinking_dict["stop"] = until_thinking_str_list # Default stop for thinking
-                
                 base_prompts_for_thinking = [req + thinking_start_tok for req in true_original_requests_toks]
-                vllm_sampling_params_thinking = SamplingParams(**sampling_params_thinking_dict)
-
+                
                 if rejection_sample:
                     # ... (Your rejection sampling logic - needs to populate `outputs_thinking`) ...
                     eval_logger.warning("Rejection sampling logic needs to be fully integrated here.")
@@ -389,8 +444,8 @@ class VLLM(TemplateLM):
                                         text_to_add_this_step = self.tokenizer.decode(tokens_to_add_this_step)
 
                             else: # Not a final step, check for stop sequence to ignore
-                                for stop_seq_idx, stop_seq_toks_candidate in enumerate(until_thinking_tok_list):
-                                    stop_seq_str_candidate = until_thinking_str_list[stop_seq_idx]
+                                for stop_seq_idx, stop_seq_toks_candidate in enumerate(until_thinking_tok_list_encoded):
+                                    stop_seq_str_candidate = until_thinking_str_list_input[stop_seq_idx]
                                     if len(segment_tokens) >= len(stop_seq_toks_candidate) and \
                                        segment_tokens[-len(stop_seq_toks_candidate):] == stop_seq_toks_candidate:
                                         continue_thinking_for_this_req = True
@@ -484,19 +539,43 @@ class VLLM(TemplateLM):
                 else: # No thinking occurred or outputs_thinking is empty
                     requests = true_original_requests_toks # Fallback to original if no thoughts generated
                 
-                # `kwargs` should now only contain parameters for the final answer stage,
-                # not thinking-specific or general sampling ones already used for thinking.
-                final_kwargs_for_vllm = {"max_tokens": max_tokens, "stop": stop, **kwargs}
+                # `requests` is updated to `requests_for_answer_stage`
+                # `kwargs` has been cleaned of _thinking specific params.
+                # It now contains general sampling params (e.g. "temperature" if "temperature_thinking" was not used and "temperature" was in original gen_kwargs)
+                # and any other non-vLLM, non-thinking-control kwargs that were originally passed.
+                
+                # Prepare final parameters for ANSWER generation
+                final_params_for_vllm_call = {"max_tokens": max_tokens, "stop": stop} # `max_tokens` & `stop` are from func signature
+                
+                # Add other relevant sampling parameters from the now-cleaned kwargs
+                for key in known_sampling_param_keys:
+                    if key in kwargs and key not in ["max_tokens", "stop"]: # Avoid overriding explicit ones for answer phase
+                        final_params_for_vllm_call[key] = kwargs[key]
 
             else: # No thinking phase was active at all
                 requests = true_original_requests_toks
-                final_kwargs_for_vllm = {"max_tokens": max_tokens, "stop": stop, **kwargs}
+                # Prepare parameters for direct answer generation (no thinking)
+                final_params_for_vllm_call = {"max_tokens": max_tokens, "stop": stop}
+                for key in known_sampling_param_keys: # Add general sampling params from kwargs
+                     if key in kwargs and key not in ["max_tokens", "stop"]:
+                        final_params_for_vllm_call[key] = kwargs[key]
         
         else: # Loglikelihood mode
             requests = true_original_requests_toks
-            final_kwargs_for_vllm = {"temperature": 0, "prompt_logprobs": 1, "max_tokens": 1, "detokenize": False}
+            # Loglikelihood has its own fixed params
+            final_params_for_vllm_call = {"temperature": 0, "prompt_logprobs": 1, "max_tokens": 1, "detokenize": False} 
         
-        final_vllm_sampling_params = SamplingParams(**final_kwargs_for_vllm)
+        # Ensure critical defaults for vLLM if not set, especially for generation
+        if generate:
+            if final_params_for_vllm_call.get("max_tokens") is None: # Should be set if generate=True
+                 final_params_for_vllm_call["max_tokens"] = self.max_gen_toks # Fallback for safety
+            # vLLM SamplingParams has its own defaults for temp, top_p, top_k, so explicit setdefault might not be needed
+            # unless specific overrides are desired when not provided.
+            # final_params_for_vllm_call.setdefault("temperature", 1.0) 
+            # final_params_for_vllm_call.setdefault("top_p", 1.0)
+            # final_params_for_vllm_call.setdefault("top_k", -1) # -1 often means no top_k filtering
+
+        final_vllm_sampling_params = SamplingParams(**final_params_for_vllm_call)
 
         # Data parallel logic (currently simplified/placeholder in previous attempts)
         # if self.data_parallel_size > 1: ...
