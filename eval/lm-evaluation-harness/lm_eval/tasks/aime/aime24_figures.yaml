@@ -22,7 +22,7 @@ metric_list:
     aggregation: mean_last30
     higher_is_better: true
   - metric: extracted_answers
-    aggregation: mean
+    aggregation: bypass
     higher_is_better: true
 metadata:
   version: 1.0

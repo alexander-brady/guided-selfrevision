@@ -18,6 +18,7 @@ lm_eval --model vllm --model_args arallel_size=2,max_model_len=2048,gpu_memory_u
     #ssh ubuntu@104.171.203.117 -i ./CS4NLP_GPUs.pem
     ssh ubuntu@104.171.202.48 -i ./CS4NLP_GPUs.pem
     ssh ubuntu@104.171.202.166 -i ./CS4NLP_GPUs.pem
+    ssh ubuntu@158.101.120.219 -i ./CS4NLP_GPUs.pem
 
 
     # generate key 
@@ -135,7 +136,7 @@ lm_eval --model vllm \
   --batch_size auto \
   --log_samples \
   --output_path ./results \
-  --gen_kwargs "max_gen_toks=32768,max_tokens_thinking=auto,thinking_n_ignore_str=\"Wait###Hmm I should double-check this.###Do we need to think more?###Let me verify this calculation.###I need to analyze this from another angle.###Let me work through this step-by-step.###Am I confident in this result?###Let me trace through the logic again.###This deserves more careful analysis.###Let me reason through this systematically.###Is this correct like this?###Could this be wrong###So given this and that###Is this the right conclusion?###Is this sound?###Is this a logical conclusion...?\""
+  --gen_kwargs "max_gen_toks=2048,max_tokens_thinking=1800,thinking_n_ignore_str=\"Wait###Hmm I should double-check this.###Do we need to think more?###Let me verify this calculation.###I need to analyze this from another angle.###Let me work through this step-by-step.###Am I confident in this result?###Let me trace through the logic again.###This deserves more careful analysis.###Let me reason through this systematically.###Is this correct like this?###Could this be wrong###So given this and that###Is this the right conclusion?###Is this sound?###Is this a logical conclusion...?\""
 
 
 
