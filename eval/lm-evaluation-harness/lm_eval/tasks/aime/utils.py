@@ -300,6 +300,12 @@ def process_results(doc: dict, results: List[str]) -> Dict[str, int]:
                 metrics[f"cov@{i}"] = int(1 in metrics["exact_matches"])
                 metrics[f"maj@{i}"] = int(gt == Counter(metrics["extracted_answers"]).most_common(1)[0][0])
 
+        # ADD DEBUG LOGGING
+        print(f"DEBUG - Raw model output: '{a[:200]}...'")  # First 200 chars
+        print(f"DEBUG - Extracted answer: '{a}'")
+        print(f"DEBUG - Ground truth: '{gt}'")
+        print("=" * 50)
+
     return metrics
 
 def last_boxed_only_string(string: str) -> Optional[str]:
