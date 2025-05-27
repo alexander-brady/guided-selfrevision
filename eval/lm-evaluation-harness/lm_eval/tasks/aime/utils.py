@@ -220,6 +220,13 @@ def process_docs(dataset: datasets.Dataset) -> datasets.Dataset:
     return dataset.map(_process_doc)
 
 def process_results(doc: dict, results: List[str]) -> Dict[str, int]:
+    print(f"DEBUG - Type of results: {type(results)}")
+    print(f"DEBUG - Length of results: {len(results)}")
+    if results:
+        print(f"DEBUG - First result type: {type(results[0])}")
+        if isinstance(results[0], list):
+            print(f"DEBUG - First result length: {len(results[0])}")
+    
     metrics = {"exact_match": None, "extracted_answers": []}
     # bp()
     # Multiple results -> we are measuring cov/maj etc
