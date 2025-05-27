@@ -594,6 +594,7 @@ class VLLM(TemplateLM):
                             # Re-pass other necessary attributes from req to new Instance
                             request_type=req.request_type,
                             doc=req.doc,
+                            idx=req.idx,
                             metadata=req.metadata,
                             resps=req.resps,
                             task_name=req.task_name,
