@@ -245,7 +245,7 @@ class VLLM(TemplateLM):
         if generate:
             # kwargs is modified by modify_gen_kwargs (e.g. temperature for do_sample=False, skip_special_tokens)
             # This `kwargs` still contains _thinking suffixed params and other thinking control params.
-            kwargs = self.modify_gen_kwargs(kwargs) 
+            kwargs = self.modify_gen_kwargs(kwargs)
 
             rejection_sample = kwargs.get("rejection_sample") # Use .get(), don't pop yet
             if rejection_sample:
@@ -278,13 +278,18 @@ class VLLM(TemplateLM):
                         general_stop_for_thinking_phase = [general_stop_for_thinking_phase]
                     until_thinking_str_list_input.extend(s for s in general_stop_for_thinking_phase if s not in until_thinking_str_list_input)
 
+                # Add EOS token to thinking stops
+                eos_token_str = self.tokenizer.decode(self.eot_token_id)
+                if eos_token_str not in until_thinking_str_list_input:
+                    until_thinking_str_list_input.append(eos_token_str)
+
                 eval_logger.info(f"Thinking start: {thinking_start}, Thinking end: {thinking_end}, Stop during thinking: {until_thinking_str_list_input}")
                 
                 thinking_start_tok = self.tok_encode(thinking_start)
                 thinking_end_tok = self.tok_encode(thinking_end)
-                thinking_end_max = thinking_end + "\nFinal Answer:" # Actual newline, not escaped
+                thinking_end_max = thinking_end + "\\nFinal Answer:" # Escaped newline
                 thinking_end_max_tok = self.tok_encode(thinking_end_max)
-                newline_tok = self.tok_encode("\n") # Actual newline, not escaped
+                newline_tok = self.tok_encode("\\n") # Escaped newline
 
                 # --- Prepare parameters for THINKING phase ---
                 sampling_params_for_thinking = {}
@@ -333,39 +338,23 @@ class VLLM(TemplateLM):
                 # Handle stop sequences for the thinking phase
                 until_thinking_tok_list_encoded = self.tok_encode(until_thinking_str_list_input)
                 
-                min_tokens_val_thinking = 0
-                # Ensure min_tokens is an int if present or derived
-                current_min_tokens_thinking = sampling_params_for_thinking.get("min_tokens", 0)
-                try:
-                    min_tokens_val_thinking = int(current_min_tokens_thinking)
-                except (ValueError, TypeError):
-                    min_tokens_val_thinking = 0 # Default if conversion fails
-
-                if thinking_n_ignore is not None: 
-                    min_tokens_val_thinking = max(min_tokens_val_thinking, 1)
-                sampling_params_for_thinking["min_tokens"] = min_tokens_val_thinking
-
-
                 single_token_stops_thinking = [t[0] for t in until_thinking_tok_list_encoded if len(t) == 1]
                 multi_token_stop_strings_thinking = [s for s, t_list in zip(until_thinking_str_list_input, until_thinking_tok_list_encoded) if len(t_list) > 1]
                 
-                # Merge with existing stop_token_ids from general params if any
-                final_stop_token_ids_thinking = list(set(sampling_params_for_thinking.get("stop_token_ids", []) + single_token_stops_thinking))
-                if final_stop_token_ids_thinking:
-                    sampling_params_for_thinking["stop_token_ids"] = final_stop_token_ids_thinking
+                # Set stop sequences for thinking - be more explicit
+                if single_token_stops_thinking:
+                    sampling_params_for_thinking["stop_token_ids"] = single_token_stops_thinking
                 
-                # Merge with existing stop strings from general params if any
-                final_stop_strings_thinking = list(set(sampling_params_for_thinking.get("stop", []) + multi_token_stop_strings_thinking))
-                if not final_stop_strings_thinking and not final_stop_token_ids_thinking and until_thinking_str_list_input : 
-                    sampling_params_for_thinking["stop"] = until_thinking_str_list_input # Fallback
-                elif final_stop_strings_thinking:
-                     sampling_params_for_thinking["stop"] = final_stop_strings_thinking
+                if multi_token_stop_strings_thinking:
+                    sampling_params_for_thinking["stop"] = multi_token_stop_strings_thinking
+                elif until_thinking_str_list_input:  # Fallback to original if no multi-token stops
+                    sampling_params_for_thinking["stop"] = until_thinking_str_list_input
+
+                # Debug: Print the thinking parameters before creating SamplingParams
+                print(f"DEBUG: thinking params keys: {list(sampling_params_for_thinking.keys())}")
+                print(f"DEBUG: thinking stop sequences: {sampling_params_for_thinking.get('stop', [])}")
+                print(f"DEBUG: thinking stop_token_ids: {sampling_params_for_thinking.get('stop_token_ids', [])}")
                 
-                # Remove original 'stop' or 'stop_token_ids' if they were only for general and now specific thinking stops are set
-                # This logic depends on whether general 'stop' should always persist or be replaced by specific thinking stops.
-                # The current logic above merges them, giving precedence to specific thinking stops if there's overlap in how VLLM handles multiple stop types.
-
-
                 # Construct SamplingParams for thinking
                 vllm_sampling_params_thinking = SamplingParams(**sampling_params_for_thinking)
                 
@@ -380,7 +369,7 @@ class VLLM(TemplateLM):
                     eval_logger.info(f"Thinking ignore string options (dynamic): {thinking_n_ignore_str_or_list}")
 
                 base_prompts_for_thinking = [req + thinking_start_tok for req in true_original_requests_toks]
-                
+
                 if rejection_sample:
                     # ... (Your rejection sampling logic - needs to populate `outputs_thinking`) ...
                     eval_logger.warning("Rejection sampling logic needs to be fully integrated here.")
@@ -470,7 +459,7 @@ class VLLM(TemplateLM):
                                         
                                         tokens_to_add_this_step.extend(chosen_ignore_toks_for_step)
                                         text_to_add_this_step += chosen_ignore_text_for_step
-                                        break 
+                                        break
                             
                             accumulated_thought_data.token_ids.extend(tokens_to_add_this_step)
                             accumulated_thought_data.text += text_to_add_this_step
@@ -518,11 +507,11 @@ class VLLM(TemplateLM):
                             if final_thought_finish_reason == "length":
                                 current_answer_prompt_toks.extend(newline_tok + thinking_end_max_tok)
                                 full_wrapped_thought_text_for_record += "\n" + thinking_end_max
-                            else:
+                        else:
                                 current_answer_prompt_toks.extend(thinking_end_tok)
                                 full_wrapped_thought_text_for_record += thinking_end
                             thought_result_obj.outputs[0].text = full_wrapped_thought_text_for_record
-                        else:
+                    else:
                             eval_logger.warning(f"Req {i}: No valid thought. Appending only thinking_end.")
                             current_answer_prompt_toks.extend(thinking_end_tok)
                             if outputs_thinking[i] is None: # If it was None, create a minimal placeholder
@@ -592,16 +581,12 @@ class VLLM(TemplateLM):
                 sampling_params=final_vllm_sampling_params,
                 use_tqdm=True if self.batch_size == "auto" else False)
             
-        if generate and outputs_thinking is not None:
+        if generate and outputs_thinking is not None: # Ensure outputs_thinking exists
             for i, answer_out_obj in enumerate(final_model_outputs):
                 if i < len(outputs_thinking) and outputs_thinking[i] and \
-                   outputs_thinking[i].outputs and answer_out_obj.outputs:
-                    # Only get the pure answer part, not the full thinking+answer
-                    answer_only = answer_out_obj.outputs[0].text
+                   outputs_thinking[i].outputs and answer_out_obj.outputs: # Defensive checks
                     thinking_text_part = outputs_thinking[i].outputs[0].text
-                    # Ensure we don't double-add the thinking content
-                    if not answer_only.startswith(thinking_text_part):
-                        answer_out_obj.outputs[0].text = thinking_text_part + answer_only
+                    answer_out_obj.outputs[0].text = thinking_text_part + answer_out_obj.outputs[0].text
         
         return final_model_outputs
 
@@ -935,4 +920,12 @@ class VLLM(TemplateLM):
         kwargs["spaces_between_special_tokens"] = kwargs.get(
             "spaces_between_special_tokens", False
         )
+        # More thorough cleaning of kwargs
+        kwargs_keys_to_remove = []
+        for k in kwargs.keys():
+            if k.endswith("_thinking") or k in ["rejection_sample", "max_tokens_thinking"]:
+                kwargs_keys_to_remove.append(k)
+        
+        for k in kwargs_keys_to_remove:
+            kwargs.pop(k, None)
         return kwargs
