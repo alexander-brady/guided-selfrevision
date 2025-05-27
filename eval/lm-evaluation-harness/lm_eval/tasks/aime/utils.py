@@ -268,14 +268,17 @@ def process_results(doc: dict, results: List[str]) -> Dict[str, int]:
         if (a.isdigit()) and (gt.isdigit()):
             a = str(int(a)) # 023 -> 23
         elif sampler is not None:
-            options = [gt] + list(set(metrics["extracted_answers"]) - {gt})
-            if len(options) > 7:
-                # Could switch back to exact returning like in that case
-                # Problem with exact returning is that it sometimes messes up small things like a dollar sign
-                print("Warning: Lots of options which may harm indexing performance:", options)            
-            # This ensures that if doc['answer'] is \text{Evelyn} it is represented as such and not \\text{Evelyn}
+            # FIX: Handle the case where extracted_answers is now a single value, not a list
+            if isinstance(metrics["extracted_answers"], list):
+                existing_answers = set(metrics["extracted_answers"])
+            else:
+                # extracted_answers is a single value or empty
+                existing_answers = {metrics["extracted_answers"]} if metrics["extracted_answers"] is not None else set()
+            
+            options = [gt] + list(existing_answers - {gt})
+            
+            # Rest of the OpenAI logic stays the same...
             options_str = "[" + ", ".join(["'" + str(o) + "'" for o in options]) + "]"
-            # a = extract_answer(sampler, options, a)
             idx = extract_answer_idx(sampler, options_str, a)
             if idx != "-1":
                 if idx.isdigit():
@@ -329,7 +332,10 @@ def process_results(doc: dict, results: List[str]) -> Dict[str, int]:
             pass # 'a' should be a string representation of the extracted answer by this point
 
         if i == 1:  # Only store for the first sample of each problem
-            metrics["extracted_answers"] = current_extracted_answer_to_store  # Single string, not list
+            try:
+                metrics["extracted_answers"] = int(current_extracted_answer_to_store)  # Store as INTEGER
+            except:
+                metrics["extracted_answers"] = -1  # Fallback for invalid numbers
         
         # For exact_match, we still compare 'a' (the processed string) with 'gt'
         is_correct = int(str(a) == str(gt))  # Compare as strings
@@ -345,18 +351,11 @@ def process_results(doc: dict, results: List[str]) -> Dict[str, int]:
             metrics["exact_matches"].append(is_correct)
             if i in n_res_list:
                 metrics[f"cov@{i}"] = int(1 in metrics["exact_matches"])
-                # For maj@i, we need to compare against gt.
-                # The Counter counts occurrences of extracted strings.
-                # We need to check if the most common extracted string is equal to gt.
-                if metrics["extracted_answers"]: # Ensure list is not empty
-                    most_common_ans_tuple = Counter(metrics["extracted_answers"]).most_common(1)
-                    if most_common_ans_tuple:
-                        most_common_ans_str = most_common_ans_tuple[0][0]
-                        metrics[f"maj@{i}"] = int(str(most_common_ans_str) == str(gt))
-                    else:
-                        metrics[f"maj@{i}"] = 0 # No answers to compare
-                else:
-                    metrics[f"maj@{i}"] = 0
+                
+                # FIX THE MAJORITY VOTE LOGIC - we need to collect all answers first
+                # Since we're only storing the first answer, maj@i logic needs rethinking
+                # For now, let's disable it to see if that fixes the -1 issue
+                metrics[f"maj@{i}"] = 0  # Disable for now since we only store first answer
 
 
     print(f"FINAL DEBUG - All extracted answers: {metrics['extracted_answers']}")
