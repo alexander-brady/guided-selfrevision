@@ -248,6 +248,9 @@ def process_results(doc: dict, results: List[str]) -> Dict[str, int]:
     split_tokens = ["<|im_start|>answer\n", "<|im_start|>"]
 
     for i, a in enumerate(results, start=1):
+        # Store original for debugging
+        original_a = a
+        
         if split_tokens[0] in a:
             a = a.split(split_tokens[0])[-1]
         elif split_tokens[1] in a:
@@ -267,7 +270,7 @@ def process_results(doc: dict, results: List[str]) -> Dict[str, int]:
         elif sampler is not None:
             options = [gt] + list(set(metrics["extracted_answers"]) - {gt})
             if len(options) > 7:
-                # Could switch back to exact returning like in AIME in that case
+                # Could switch back to exact returning like in that case
                 # Problem with exact returning is that it sometimes messes up small things like a dollar sign
                 print("Warning: Lots of options which may harm indexing performance:", options)            
             # This ensures that if doc['answer'] is \text{Evelyn} it is represented as such and not \\text{Evelyn}
@@ -286,8 +289,14 @@ def process_results(doc: dict, results: List[str]) -> Dict[str, int]:
         else:
             pass # TODO: Maybe add back legacy processing
 
+        # ADD DEBUG LOGGING HERE - BEFORE converting to int
+        print(f"DEBUG - Raw model output: '{original_a[:200]}...'")  # First 200 chars of original
+        print(f"DEBUG - Extracted answer: '{a}'")
+        print(f"DEBUG - Ground truth: '{gt}'")
+        print("=" * 50)
+        
         metrics["extracted_answers"].append(a)
-        a = int(a == gt)
+        a = int(a == gt)  # NOW convert to int
         if not(a): # Optional logging
             print("Marked incorrect\na " + metrics["extracted_answers"][-1] + "\ndoc['answer'] " + gt)
         if i == 1:
@@ -299,12 +308,6 @@ def process_results(doc: dict, results: List[str]) -> Dict[str, int]:
             if i in n_res_list:
                 metrics[f"cov@{i}"] = int(1 in metrics["exact_matches"])
                 metrics[f"maj@{i}"] = int(gt == Counter(metrics["extracted_answers"]).most_common(1)[0][0])
-
-        # ADD DEBUG LOGGING
-        print(f"DEBUG - Raw model output: '{a[:200]}...'")  # First 200 chars
-        print(f"DEBUG - Extracted answer: '{a}'")
-        print(f"DEBUG - Ground truth: '{gt}'")
-        print("=" * 50)
 
     return metrics
 
