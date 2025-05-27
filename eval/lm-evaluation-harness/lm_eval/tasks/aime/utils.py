@@ -289,6 +289,29 @@ def process_results(doc: dict, results: List[str]) -> Dict[str, int]:
         else:
             pass # TODO: Maybe add back legacy processing
 
+        # ADD FALLBACK LOGIC HERE - BEFORE storing the answer
+        # If 'a' is not a reasonable answer (not a digit), try to extract a number ourselves
+        if not str(a).strip().isdigit():
+            # OpenAI extraction failed or returned non-numeric text
+            # Try basic number extraction as fallback
+            print(f"WARNING: Non-numeric extraction '{str(a)[:100]}...', trying fallback extraction")
+            
+            # Try to find any number in the text
+            numbers = re.findall(r'\b(\d+)\b', str(a))
+            if numbers:
+                # Take the last number found (most likely to be the final answer)
+                candidate = numbers[-1]
+                # Ensure it's in AIME range (0-999)
+                if candidate.isdigit() and 0 <= int(candidate) <= 999:
+                    a = str(int(candidate))  # Normalize (remove leading zeros)
+                    print(f"Fallback extracted: '{a}'")
+                else:
+                    a = "999"  # Invalid range, use placeholder
+                    print(f"Number out of range, using placeholder: '{a}'")
+            else:
+                a = "999"  # No numbers found, use placeholder
+                print(f"No numbers found, using placeholder: '{a}'")
+
         # ADD DEBUG LOGGING HERE - BEFORE converting to int
         print(f"DEBUG - Raw model output: '{original_a[:200]}...'")  # First 200 chars of original
         print(f"DEBUG - Extracted answer (before final append): '{a}'") # See what 'a' is here
