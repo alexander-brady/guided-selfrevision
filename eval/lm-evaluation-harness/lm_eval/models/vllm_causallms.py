@@ -350,11 +350,6 @@ class VLLM(TemplateLM):
                 elif until_thinking_str_list_input:  # Fallback to original if no multi-token stops
                     sampling_params_for_thinking["stop"] = until_thinking_str_list_input
 
-                # Debug: Print the thinking parameters before creating SamplingParams
-                print(f"DEBUG: thinking params keys: {list(sampling_params_for_thinking.keys())}")
-                print(f"DEBUG: thinking stop sequences: {sampling_params_for_thinking.get('stop', [])}")
-                print(f"DEBUG: thinking stop_token_ids: {sampling_params_for_thinking.get('stop_token_ids', [])}")
-                
                 # Construct SamplingParams for thinking
                 vllm_sampling_params_thinking = SamplingParams(**sampling_params_for_thinking)
                 
@@ -451,11 +446,11 @@ class VLLM(TemplateLM):
                                             selected_signal = random.choice(thinking_n_ignore_str_or_list)
                                             chosen_ignore_toks_for_step = self.tok_encode(selected_signal)
                                             chosen_ignore_text_for_step = selected_signal
-                                            eval_logger.debug(f"Req {original_request_idx_in_batch}: Dynamic: '{selected_signal}'")
+                                            eval_logger.info(f"Req {original_request_idx_in_batch}: Dynamic: '{selected_signal}'")
                                         elif thinking_n_ignore_str_tok_static: # A single string was provided
                                             chosen_ignore_toks_for_step = thinking_n_ignore_str_tok_static
                                             chosen_ignore_text_for_step = static_thinking_n_ignore_str_text
-                                            eval_logger.debug(f"Req {original_request_idx_in_batch}: Static: '{static_thinking_n_ignore_str_text}'")
+                                            eval_logger.info(f"Req {original_request_idx_in_batch}: Static: '{static_thinking_n_ignore_str_text}'")
                                         
                                         tokens_to_add_this_step.extend(chosen_ignore_toks_for_step)
                                         text_to_add_this_step += chosen_ignore_text_for_step
@@ -507,11 +502,11 @@ class VLLM(TemplateLM):
                             if final_thought_finish_reason == "length":
                                 current_answer_prompt_toks.extend(newline_tok + thinking_end_max_tok)
                                 full_wrapped_thought_text_for_record += "\n" + thinking_end_max
-                        else:
+                            else:
                                 current_answer_prompt_toks.extend(thinking_end_tok)
                                 full_wrapped_thought_text_for_record += thinking_end
                             thought_result_obj.outputs[0].text = full_wrapped_thought_text_for_record
-                    else:
+                        else:
                             eval_logger.warning(f"Req {i}: No valid thought. Appending only thinking_end.")
                             current_answer_prompt_toks.extend(thinking_end_tok)
                             if outputs_thinking[i] is None: # If it was None, create a minimal placeholder
@@ -656,7 +651,6 @@ class VLLM(TemplateLM):
                     if hasattr(requests[i], 'arguments') and isinstance(requests[i].arguments, tuple) and len(requests[i].arguments) == 2:
                         current_context, current_gen_kwargs = requests[i].arguments
                         current_gen_kwargs["thinking_n_ignore_str"] = signals
-                        print(f"current_gen_kwargs: {current_gen_kwargs}")
                         requests[i] = Instance(
                             arguments=(current_context, current_gen_kwargs), # type: ignore
                             # Re-pass other necessary attributes from req to new Instance
@@ -920,12 +914,5 @@ class VLLM(TemplateLM):
         kwargs["spaces_between_special_tokens"] = kwargs.get(
             "spaces_between_special_tokens", False
         )
-        # More thorough cleaning of kwargs
-        kwargs_keys_to_remove = []
-        for k in kwargs.keys():
-            if k.endswith("_thinking") or k in ["rejection_sample", "max_tokens_thinking"]:
-                kwargs_keys_to_remove.append(k)
-        
-        for k in kwargs_keys_to_remove:
-            kwargs.pop(k, None)
+        # Remove the cleaning logic from here - it should happen later in _model_generate
         return kwargs
