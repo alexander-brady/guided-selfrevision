@@ -328,7 +328,8 @@ def process_results(doc: dict, results: List[str]) -> Dict[str, int]:
             # If 'a' became something else (e.g. from OpenAI processing), this ensures it's a string.
             pass # 'a' should be a string representation of the extracted answer by this point
 
-        metrics["extracted_answers"].append(current_extracted_answer_to_store)
+        if i == 1:  # Only store for the first sample of each problem
+            metrics["extracted_answers"] = current_extracted_answer_to_store  # Single string, not list
         
         # For exact_match, we still compare 'a' (the processed string) with 'gt'
         is_correct = int(str(a) == str(gt))  # Compare as strings
