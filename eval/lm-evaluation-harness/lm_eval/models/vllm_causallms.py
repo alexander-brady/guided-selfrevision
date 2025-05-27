@@ -282,9 +282,9 @@ class VLLM(TemplateLM):
                 
                 thinking_start_tok = self.tok_encode(thinking_start)
                 thinking_end_tok = self.tok_encode(thinking_end)
-                thinking_end_max = thinking_end + "\\nFinal Answer:" # Escaped newline
+                thinking_end_max = thinking_end + "\nFinal Answer:" # Actual newline, not escaped
                 thinking_end_max_tok = self.tok_encode(thinking_end_max)
-                newline_tok = self.tok_encode("\\n") # Escaped newline
+                newline_tok = self.tok_encode("\n") # Actual newline, not escaped
 
                 # --- Prepare parameters for THINKING phase ---
                 sampling_params_for_thinking = {}
@@ -592,12 +592,16 @@ class VLLM(TemplateLM):
                 sampling_params=final_vllm_sampling_params,
                 use_tqdm=True if self.batch_size == "auto" else False)
             
-        if generate and outputs_thinking is not None: # Ensure outputs_thinking exists
+        if generate and outputs_thinking is not None:
             for i, answer_out_obj in enumerate(final_model_outputs):
                 if i < len(outputs_thinking) and outputs_thinking[i] and \
-                   outputs_thinking[i].outputs and answer_out_obj.outputs: # Defensive checks
+                   outputs_thinking[i].outputs and answer_out_obj.outputs:
+                    # Only get the pure answer part, not the full thinking+answer
+                    answer_only = answer_out_obj.outputs[0].text
                     thinking_text_part = outputs_thinking[i].outputs[0].text
-                    answer_out_obj.outputs[0].text = thinking_text_part + answer_out_obj.outputs[0].text
+                    # Ensure we don't double-add the thinking content
+                    if not answer_only.startswith(thinking_text_part):
+                        answer_out_obj.outputs[0].text = thinking_text_part + answer_only
         
         return final_model_outputs
 
