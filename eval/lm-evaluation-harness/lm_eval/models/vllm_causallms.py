@@ -590,7 +590,7 @@ class VLLM(TemplateLM):
                         current_gen_kwargs["thinking_n_ignore_str"] = signals
                         print(f"current_gen_kwargs: {current_gen_kwargs}")
                         requests[i] = Instance(
-                            args=(current_context, current_gen_kwargs), # type: ignore
+                            arguments=(current_context, current_gen_kwargs), # type: ignore
                             # Re-pass other necessary attributes from req to new Instance
                             request_type=req.request_type,
                             doc=req.doc,
