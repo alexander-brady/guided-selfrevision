@@ -291,23 +291,49 @@ def process_results(doc: dict, results: List[str]) -> Dict[str, int]:
 
         # ADD DEBUG LOGGING HERE - BEFORE converting to int
         print(f"DEBUG - Raw model output: '{original_a[:200]}...'")  # First 200 chars of original
-        print(f"DEBUG - Extracted answer: '{a}'")
+        print(f"DEBUG - Extracted answer (before final append): '{a}'") # See what 'a' is here
         print(f"DEBUG - Ground truth: '{gt}'")
         print("=" * 50)
         
-        metrics["extracted_answers"].append(a)
-        a = int(a == gt)  # NOW convert to int
-        if not(a): # Optional logging
-            print("Marked incorrect\na " + metrics["extracted_answers"][-1] + "\ndoc['answer'] " + gt)
+        # Ensure 'a' is a string, and if it's not a digit, make it a consistent non-numeric string
+        current_extracted_answer_to_store = str(a) # Convert to string
+        if not current_extracted_answer_to_store.isdigit(): # Or more robust check if it's a valid number
+            # If 'a' is something like "I don't know" or some text, 
+            # you might want to store it as is, or a placeholder like "NaN_text"
+            # For now, let's assume 'a' after your processing SHOULD be a number string or it's an error
+            # If 'a' is already a number string (e.g. "120"), this does nothing.
+            # If 'a' became something else (e.g. from OpenAI processing), this ensures it's a string.
+            pass # 'a' should be a string representation of the extracted answer by this point
+
+        metrics["extracted_answers"].append(current_extracted_answer_to_store)
+        
+        # For exact_match, we still compare 'a' (the processed string) with 'gt'
+        is_correct = int(str(a) == str(gt))  # Compare as strings
+        
+        if not(is_correct): # Optional logging
+            print(f"Marked incorrect\na {current_extracted_answer_to_store}\ndoc['answer'] {gt}")
+        
         if i == 1:
-            metrics["exact_match"] = a
+            metrics["exact_match"] = is_correct
             if "exact_matches" in metrics:
-                metrics["exact_matches"].append(a)
+                metrics["exact_matches"].append(is_correct)
         elif i > 1:
-            metrics["exact_matches"].append(a)
+            metrics["exact_matches"].append(is_correct)
             if i in n_res_list:
                 metrics[f"cov@{i}"] = int(1 in metrics["exact_matches"])
-                metrics[f"maj@{i}"] = int(gt == Counter(metrics["extracted_answers"]).most_common(1)[0][0])
+                # For maj@i, we need to compare against gt.
+                # The Counter counts occurrences of extracted strings.
+                # We need to check if the most common extracted string is equal to gt.
+                if metrics["extracted_answers"]: # Ensure list is not empty
+                    most_common_ans_tuple = Counter(metrics["extracted_answers"]).most_common(1)
+                    if most_common_ans_tuple:
+                        most_common_ans_str = most_common_ans_tuple[0][0]
+                        metrics[f"maj@{i}"] = int(str(most_common_ans_str) == str(gt))
+                    else:
+                        metrics[f"maj@{i}"] = 0 # No answers to compare
+                else:
+                    metrics[f"maj@{i}"] = 0
+
 
     print(f"FINAL DEBUG - All extracted answers: {metrics['extracted_answers']}")
     print(f"FINAL DEBUG - Metrics being returned: {metrics}")
