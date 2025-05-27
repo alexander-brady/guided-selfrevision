@@ -2,7 +2,7 @@ from collections import Counter
 import os
 import re
 import signal
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional
 
 import datasets
 
@@ -219,32 +219,34 @@ def process_docs(dataset: datasets.Dataset) -> datasets.Dataset:
         return out_doc
     return dataset.map(_process_doc)
 
-def process_results(doc: dict, results: Union[List[str], str]) -> Dict[str, Any]:
-    eval_logger.info(f"DEBUG - process_results received results type: {type(results)}")
-    if isinstance(results, list):
-        eval_logger.info(f"DEBUG - process_results received list of length: {len(results)}")
+def process_results(doc: dict, results: List[str]) -> Dict[str, int]:
+    metrics = {"exact_match": None, "extracted_answers": []}
+    # bp()
+    # Multiple results -> we are measuring cov/maj etc
+    if isinstance(results[0], list):
+        results = results[0]
+        n_res = len(results) # e.g. 64
+        n_res_list = [2**i for i in range(1, int(n_res.bit_length()))] # e.g. [2, 4, 8, 16, 32, 64]
+        metrics = {
+            **metrics,
+            "exact_matches": [],
+            **{f"cov@{n}": -1 for n in n_res_list},
+            **{f"maj@{n}": -1 for n in n_res_list},
+        }
+
+    if os.getenv("PROCESSOR", "") == "gpt-4o-mini":
+        sampler = ChatCompletionSampler(model="gpt-4o-mini")
     else:
-        eval_logger.info(f"DEBUG - process_results received single string.")
+        print(f"Unknown processor: {os.getenv('PROCESSOR')}; set 'PROCESSOR=gpt-4o-mini' and 'OPENAI_API_KEY=YOUR_KEY' for best results.")
+        sampler = None
 
-    # If a single string is passed (e.g., n=1 or task doesn't use n), wrap it in a list for uniform processing.
-    if isinstance(results, str):
-        results = [results]
-
-    metrics: Dict[str, Any] = {"exact_match": None, "extracted_answers": -1} # Default extracted_answers to -1
-
-    gt = str(doc["answer"])
-    if gt.isdigit():
-        gt = str(int(gt))
-
+    if isinstance(doc["answer"], str) and doc["answer"].isdigit():
+        gt = str(int(doc["answer"])) # 023 -> 23
+    else:
+        gt = str(doc["answer"])
     split_tokens = ["<|im_start|>answer\n", "<|im_start|>"]
-    
-    all_extracted_numbers_for_doc = []
-    all_exact_match_flags_for_doc = []
 
-    for i_sample, a_raw in enumerate(results, start=1):
-        a = a_raw # Make a copy to modify
-        original_a_for_debug = a 
-
+    for i, a in enumerate(results, start=1):
         if split_tokens[0] in a:
             a = a.split(split_tokens[0])[-1]
         elif split_tokens[1] in a:
@@ -254,97 +256,49 @@ def process_results(doc: dict, results: Union[List[str], str]) -> Dict[str, Any]
 
         if (box := last_boxed_only_string(a)) is not None:
             a = remove_boxed(box)
+        # re.DOTALL is key such that newlines are included e.g. if it does `Answer: Here is the solution:\n\n10`
         elif (matches := re.findall(ANSWER_PATTERN, a, re.DOTALL)) != []:
-            a = matches[-1]
+            a = matches[-1]  # Get the last match
 
-        processed_a_text = str(a).strip() # This is the text we'll try to convert to a number
-
-        # Fallback extraction logic
-        extracted_num_this_sample = -1
-        if processed_a_text.isdigit() and 0 <= int(processed_a_text) <= 999:
-            extracted_num_this_sample = int(processed_a_text)
+        # AIME answers are from 000 to 999 so often it is a digit anyways
+        if (a.isdigit()) and (gt.isdigit()):
+            a = str(int(a)) # 023 -> 23
+        elif sampler is not None:
+            options = [gt] + list(set(metrics["extracted_answers"]) - {gt})
+            if len(options) > 7:
+                # Could switch back to exact returning like in AIME in that case
+                # Problem with exact returning is that it sometimes messes up small things like a dollar sign
+                print("Warning: Lots of options which may harm indexing performance:", options)            
+            # This ensures that if doc['answer'] is \text{Evelyn} it is represented as such and not \\text{Evelyn}
+            options_str = "[" + ", ".join(["'" + str(o) + "'" for o in options]) + "]"
+            # a = extract_answer(sampler, options, a)
+            idx = extract_answer_idx(sampler, options_str, a)
+            if idx != "-1":
+                if idx.isdigit():
+                    idx = int(idx) - 1
+                    if len(options) > idx >= 0:
+                        a = options[idx]
+                    else:
+                        print("Warning: Index out of bounds; leaving answer unchanged\n", a, "\noptions", options_str, "\ndoc['answer']", gt, "\nidx", idx)
+                else:
+                    print("Warning: Processing did not produce integer index\na", a, "\noptions", options_str, "\ndoc['answer']", gt, "\nidx", idx)
         else:
-            # Try basic number extraction as fallback if not directly a digit or out of AIME range
-            eval_logger.warning(f"Non-numeric or out-of-range extraction '{processed_a_text[:100]}...', trying fallback.")
-            numbers_found = re.findall(r'\b(\d+)\b', processed_a_text)
-            if numbers_found:
-                candidate_num_str = numbers_found[-1] # Take last number
-                if candidate_num_str.isdigit() and 0 <= int(candidate_num_str) <= 999:
-                    extracted_num_this_sample = int(candidate_num_str)
-                    eval_logger.info(f"Fallback extracted: '{extracted_num_this_sample}' from '{processed_a_text[:50]}'")
-                else:
-                    eval_logger.warning(f"Fallback number '{candidate_num_str}' out of AIME range.")
-                    extracted_num_this_sample = 999 # Placeholder for out-of-range/invalid
-            else:
-                eval_logger.warning(f"No numbers found in fallback for '{processed_a_text[:50]}'.")
-                extracted_num_this_sample = 999 # Placeholder for no number found
+            pass # TODO: Maybe add back legacy processing
 
-        all_extracted_numbers_for_doc.append(extracted_num_this_sample)
-        
-        # Compare the processed text `a` for exact match purposes against string GT
-        is_correct_this_sample = int(str(a if not str(a).isdigit() else str(int(a))) == gt)
-        all_exact_match_flags_for_doc.append(is_correct_this_sample)
+        metrics["extracted_answers"].append(a)
+        a = int(a == gt)
+        if not(a): # Optional logging
+            print("Marked incorrect\na " + metrics["extracted_answers"][-1] + "\ndoc['answer'] " + gt)
+        if i == 1:
+            metrics["exact_match"] = a
+            if "exact_matches" in metrics:
+                metrics["exact_matches"].append(a)
+        elif i > 1:
+            metrics["exact_matches"].append(a)
+            if i in n_res_list:
+                metrics[f"cov@{i}"] = int(1 in metrics["exact_matches"])
+                metrics[f"maj@{i}"] = int(gt == Counter(metrics["extracted_answers"]).most_common(1)[0][0])
 
-        eval_logger.info(f"DEBUG - Sample {i_sample}: Raw='{original_a_for_debug[:100]}...', ProcessedText='{str(a)}', ExtractedNum={extracted_num_this_sample}, GT='{gt}', EM={is_correct_this_sample}")
-
-    # --- After processing all samples for the doc ---
-    
-    # For single "exact_match" metric (often first sample or if n=1)
-    if all_exact_match_flags_for_doc:
-        metrics["exact_match"] = all_exact_match_flags_for_doc[0]
-
-    # Final "extracted_answers" for the doc (e.g. majority vote on extracted numbers)
-    if all_extracted_numbers_for_doc:
-        valid_extracted_numbers = [num for num in all_extracted_numbers_for_doc if num != -1 and num != 999] # Exclude placeholders
-        if valid_extracted_numbers:
-            counts = Counter(valid_extracted_numbers)
-            metrics["extracted_answers"] = counts.most_common(1)[0][0]
-        else: # No valid numbers extracted across all samples
-            metrics["extracted_answers"] = -1 
-            # If there were samples but all led to -1/999, we might pick the first placeholder
-            if all_extracted_numbers_for_doc:
-                 metrics["extracted_answers"] = all_extracted_numbers_for_doc[0]
-
-
-    num_total_samples = len(all_exact_match_flags_for_doc)
-    if num_total_samples > 1:
-        # Ensure 'exact_matches' (plural) for per-sample EM results if it's in metric_list
-        # This depends on how your YAML is set up for what gets aggregated.
-        # For now, let's assume it's not directly stored back into metrics unless YAML asks for it.
-        # metrics["exact_matches"] = all_exact_match_flags_for_doc 
-
-        # Calculate cov@k and maj@k
-        # Define k values based on common practice or YAML (e.g. 2, 4, 8 if num_total_samples >= 8)
-        k_values_for_metrics = []
-        if num_total_samples >= 2: k_values_for_metrics.append(2)
-        if num_total_samples >= 4: k_values_for_metrics.append(4)
-        if num_total_samples >= 8: k_values_for_metrics.append(8)
-        # Add more k as needed, or derive from n_res_list as before
-
-        for k in k_values_for_metrics:
-            if k > num_total_samples: continue
-
-            first_k_em_flags = all_exact_match_flags_for_doc[:k]
-            
-            # Coverage @ k
-            metrics[f"cov@{k}"] = int(1 in first_k_em_flags)
-            
-            # Majority @ k
-            if first_k_em_flags:
-                em_counts_at_k = Counter(first_k_em_flags)
-                # Majority if count of '1's is > k/2
-                # Or if count of '1's is k/2 and it's the only one (or tie-break if needed)
-                if em_counts_at_k.get(1, 0) > k / 2.0:
-                    metrics[f"maj@{k}"] = 1
-                elif k > 1 and em_counts_at_k.get(1, 0) == k / 2.0 and em_counts_at_k.get(1,0) >= em_counts_at_k.get(0,0): # Tie break for 1s
-                     metrics[f"maj@{k}"] = 1
-                else:
-                    metrics[f"maj@{k}"] = 0
-            else: # Should not happen if k <= num_total_samples and num_total_samples > 0
-                metrics[f"maj@{k}"] = 0
-
-
-    eval_logger.info(f"FINAL DEBUG - Metrics for doc '{doc.get('id', 'N/A')}': {metrics}")
     return metrics
 
 def last_boxed_only_string(string: str) -> Optional[str]:

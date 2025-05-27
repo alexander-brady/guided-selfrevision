@@ -34,7 +34,7 @@ metric_list:
     aggregation: mean
     higher_is_better: true
   - metric: maj@8
-    aggregation: list
+    aggregation: mean
     higher_is_better: true
   - metric: maj@4
     aggregation: mean
@@ -43,7 +43,7 @@ metric_list:
     aggregation: mean
     higher_is_better: true
   - metric: extracted_answers
-    aggregation: list
+    aggregation: bypass
     higher_is_better: true
   - metric: exact_matches
     aggregation: bypass

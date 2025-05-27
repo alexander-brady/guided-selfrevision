@@ -242,6 +242,10 @@ class VLLM(TemplateLM):
             "logprobs", "prompt_logprobs", "skip_special_tokens", "spaces_between_special_tokens"
         ]
 
+        # Store the 'n' intended for the final answer phase from the original gen_kwargs
+        # This 'n' should only apply if the answer phase is non-greedy.
+        n_for_final_answer = kwargs.get("n", 1)
+
         if generate:
             # kwargs is modified by modify_gen_kwargs (e.g. temperature for do_sample=False, skip_special_tokens)
             # This `kwargs` still contains _thinking suffixed params and other thinking control params.
@@ -535,6 +539,13 @@ class VLLM(TemplateLM):
                 for key in known_sampling_param_keys:
                     if key in kwargs and key not in ["max_tokens", "stop"]: # Avoid overriding explicit ones for answer phase
                         final_params_for_vllm_call[key] = kwargs[key]
+
+                # Ensure 'n' for the answer phase uses the original n_for_final_answer
+                # (which came from the initial kwargs.get("n", 1))
+                final_params_for_vllm_call["n"] = n_for_final_answer
+                # Temperature for answer phase comes from global kwargs.get("temperature", default_temp_for_answer)
+                # If not in kwargs, vLLM uses its default (usually 1.0 for non-greedy)
+                # If temperature is 0 and n_for_final_answer > 1, vLLM will error. This needs to be handled by user command.
 
             else: # No thinking phase was active at all
                 requests = true_original_requests_toks
