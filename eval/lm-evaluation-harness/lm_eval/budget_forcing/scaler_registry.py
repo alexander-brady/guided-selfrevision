@@ -30,29 +30,3 @@ def get_scale_func(func_name: str, scale_token: List[int], **kwargs) -> Callable
         )
     
     return default_scale_func
-
-
-def should_scale_only(func):
-    """
-    Decorator for scale functions that only return a boolean 
-    indicating whether to scale.
-    """
-    
-    @wraps(func)
-    def wrapper(*args, **kwargs):
-        scale_token = kwargs.pop('scale_token')
-        return scale_token, func(*args, **kwargs)
-    
-    return wrapper
-
-
-def scale_token_only(func):
-    """
-    Decorator for scale functions that only return the scale token.
-    Returns true, thus indicating that scaling should occur.
-    """
-    @wraps(func)
-    def wrapper(*args, **kwargs):
-        return True, func(*args, **kwargs)
-    
-    return wrapper

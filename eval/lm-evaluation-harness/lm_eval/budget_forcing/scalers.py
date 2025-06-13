@@ -1,7 +1,33 @@
 import math
 from typing import List
 
-from lm_eval.budget_forcing.scaler_registry import should_scale_only, scale_token_only
+from functools import wraps
+
+
+def should_scale_only(func):
+    """
+    Decorator for scale functions that only return a boolean 
+    indicating whether to scale.
+    """
+    
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        scale_token = kwargs.pop('scale_token')
+        return scale_token, func(*args, **kwargs)
+    
+    return wrapper
+
+
+def scale_token_only(func):
+    """
+    Decorator for scale functions that only return the scale token.
+    Returns true, thus indicating that scaling should occur.
+    """
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        return True, func(*args, **kwargs)
+    
+    return wrapper
 
 
 @should_scale_only
