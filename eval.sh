@@ -39,7 +39,7 @@ OPENAI_API_KEY=$OPENAI_API_KEY PROCESSOR=$PROCESSOR VLLM_WORKER_MULTIPROC_METHOD
     --tasks aime24_nofigures,openai_math \
     --batch_size auto \
     --apply_chat_template \
-    --output_path s1.1_1.5B_eval/$USER \
+    --output_path s1.1_1.5B_eval/$USER/$SLURM_JOB_ID \
     --log_samples \
     --gen_kwargs "max_gen_toks=32768,max_tokens_thinking=auto"
 

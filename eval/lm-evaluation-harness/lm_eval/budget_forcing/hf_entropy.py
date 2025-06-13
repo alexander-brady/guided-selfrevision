@@ -5,7 +5,7 @@ from typing import Optional, List
 
 def generate_with_entropy(
     model,
-    context: List[int],
+    input_ids: List[int],
     max_length: int,
     pad_token_id: int,
     stopping_criteria: Optional[List[str]] = None,
@@ -17,7 +17,7 @@ def generate_with_entropy(
     
     Args:
         model: Hugging Face language model to use for generation.
-        context (List[int]): The input context as a list of token IDs.
+        input_ids (List[int]): The input input_ids as a list of token IDs.
         max_length (int): The maximum length of the generated text.
         pad_token_id (int): The ID of the padding token used in the model.
         stopping_criteria (Optional[List[str]]): A list of strings that, if generated, will stop the generation.
@@ -28,7 +28,7 @@ def generate_with_entropy(
         str: The generated text.
     '''
     outputs = model.generate(
-        input_ids=context,
+        input_ids=input_ids,
         max_length=max_length,
         stopping_criteria=stopping_criteria,
         pad_token_id=pad_token_id,
@@ -56,9 +56,8 @@ def generate_with_entropy(
 
 def generate_entropy_thresholding(
     model,
-    context: List[int],
+    input_ids: List[int],
     scale_token: List[int],
-    final_stop_token: List[str],
     threshold: float,
     last_k: int,
     max_steps: int,
@@ -73,21 +72,20 @@ def generate_entropy_thresholding(
     
     Args:
         model: The Hugging Face language model to use for generation.
-        context (List[int]): The input context as a list of token IDs.
-        scale_token (List[int]): The token id to begin budget forcing.
+        input_ids (List[int]): The input context as a list of token IDs.
+        scale_token (List[int]): The token id(s) to begin budget forcing.
         threshold (float): The entropy threshold. If the entropy is higher, the model will continue reasoning.
-        last_k (int): The number of last tokens to consider for entropy calculation.
+        last_k (int): The number of last tokens to consider for entropy calculation. -1 means all tokens.
         max_steps (int): The maximum number of steps to take before stopping.
         max_length (int): The maximum length of the generated text.
         pad_token_id (int): The ID of the padding token used in the model.
         decay_factor (float): A factor to lower the threshold over steps (1.0 means no decay).
         stopping_criteria (Optional[List[str]]): A list of strings that, if generated, will stop the generation.
-        final_stop_token (Optional[Union[str, List[str]]]): A token or list of tokens that will stop last, post-edging generation.
         **generation_kwargs: Additional keyword arguments for the model's generate method.
     """
     sequences, entropies = generate_with_entropy(
         model,
-        context,
+        input_ids,
         max_length,
         pad_token_id,
         stopping_criteria=stopping_criteria,
@@ -99,16 +97,17 @@ def generate_entropy_thresholding(
         if max_length <= 0:
             break
                 
-        last_k_entropies = entropies[-last_k:] 
+        last_k_entropies = entropies[-last_k:] if last_k != -1 else entropies
         avg_entropy = sum(last_k_entropies) / len(last_k_entropies) if last_k_entropies else 0.0
         
+        # Stop budget scaling if low uncertainty
         if avg_entropy < 1 - (threshold * (decay_factor ** i)):
-            break # Stop budget scaling if low uncertainty
+            break
                
-        context = sequences[0].tolist() + scale_token
+        input_ids = sequences[0].tolist() + scale_token
         sequences, entropies = generate_with_entropy(
             model,
-            context,
+            input_ids,
             max_length,
             pad_token_id,
             stopping_criteria=stopping_criteria,
@@ -119,8 +118,8 @@ def generate_entropy_thresholding(
         input_ids=sequences[0],
         max_length=32768,
         pad_token_id=pad_token_id,
-        stopping_criteria=final_stop_token,
         skip_special_tokens=False,
+        stopping_criteria=stopping_criteria,
         use_cache=True,
         **generation_kwargs,
     )

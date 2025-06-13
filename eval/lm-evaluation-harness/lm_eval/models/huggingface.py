@@ -35,6 +35,7 @@ from lm_eval.models.utils import (
     pad_and_concat,
     stop_sequences_criteria,
 )
+from lm_eval.budget_forcing import generate_entropy_thresholding
 
 if int(os.getenv("O1INFERENCE", 0)):
     import sys
@@ -847,36 +848,67 @@ class HFLM(TemplateLM):
                 assert self.AUTO_MODEL_CLASS == transformers.AutoModelForCausalLM
                 return self.model(inps).logits
 
-    def _model_generate(self, context, max_length, stop, **generation_kwargs):
-        # temperature = 0.0 if not set
-        # if do_sample is false and temp==0.0:
-        # remove temperature, as do_sample=False takes care of this
-        # and we don't want a warning from HF
-        generation_kwargs["temperature"] = generation_kwargs.get("temperature", 0.0)
-        do_sample = generation_kwargs.get("do_sample", None)
-
-        # The temperature has to be a strictly positive float -- if it is 0.0, use greedy decoding strategies
-        if generation_kwargs.get("temperature") == 0.0 and do_sample is None:
-            generation_kwargs["do_sample"] = do_sample = False
-
-        if do_sample is False and generation_kwargs.get("temperature") == 0.0:
-            generation_kwargs.pop("temperature")
+    def _model_generate(
+        self, 
+        context, 
+        max_length: int, 
+        stop_sequences: List[str], 
+        gen_function: Optional[str] = None,
+        **generation_kwargs
+    ):
+        """
+        Internal method to generate text using the model.
+        
+        Args:
+            context (torch.Tensor): Input tensor of shape [batch, sequence_length].
+            max_length (int): Maximum length of the generated sequence.
+            stop_sequences (List[str]): List of sequences to stop generation.
+            gen_function (Optional[str]): Function to use for generation, e.g. `entropy_thresholding`.
+            **generation_kwargs: Additional keyword arguments for generation.
+        Returns:
+            torch.Tensor: Generated sequences of shape [batch, sequence_length].
+        """
+        # Default `temperature`` to 0.0; remove it if not sampling to avoid HF warnings
+        temperature = generation_kwargs.get("temperature", 0.0)
+        # Default `do_sample` to `False` (greedy decoding) if `temperature` is 0.0
+        do_sample = generation_kwargs.setdefault(
+            "do_sample", temperature > 0.0
+        )
+        if not do_sample:
+            generation_kwargs.pop("temperature", None)
 
         if int(os.getenv("O1INFERENCE", 0)):
             print("O1INFERENCE is set")
             stopping_criteria = None
         else:
             stopping_criteria = stop_sequences_criteria(
-                self.tokenizer, stop, context.shape[1], context.shape[0]
+                self.tokenizer, 
+                stop_sequences, 
+                context.shape[1], 
+                context.shape[0]
             )
-        return self.model.generate(
-            input_ids=context,
-            max_length=max_length,
-            stopping_criteria=stopping_criteria,
-            pad_token_id=self.tokenizer.pad_token_id,
-            use_cache=True,
-            **generation_kwargs,
-        )
+            
+        
+        match gen_function:
+            case 'entropy_thresholding':
+                return generate_entropy_thresholding(
+                    self.model,
+                    context,               
+                    max_length=max_length,
+                    stopping_criteria=stopping_criteria,    
+                    pad_token_id=self.tokenizer.pad_token_id,
+                    **generation_kwargs
+                )
+                    
+            case _:
+                return self.model.generate(
+                    input_ids=context,
+                    max_length=max_length,
+                    stopping_criteria=stopping_criteria,
+                    pad_token_id=self.tokenizer.pad_token_id,
+                    use_cache=True,
+                    **generation_kwargs,
+                )
 
     def _select_cont_toks(
         self, logits: torch.Tensor, contlen: int = None, inplen: int = None
