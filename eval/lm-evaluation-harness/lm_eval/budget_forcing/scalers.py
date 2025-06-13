@@ -21,7 +21,7 @@ def entropy_thresholding(
     Args:
         threshold (float): The threshold for scaling.
         decay_factor (float): Factor to decay the threshold over time. 
-        last_k (float): Number of last tokens to consider for scaling. If > 1, it considers the last k tokens; if < 1, it considers the last k percent of tokens. If -1, it considers all tokens.
+        last_k (float): Number of last tokens to consider for scaling. If > 1, it considers the last k tokens; if < 1, it considers the last k percent of tokens. If -1, it considers all generated tokens.
         iteration (int): The current thinking iteration.
         seq (List[int]): The sequence of tokens.
         entropies (List[float]): The entropy for each generated token of the sequence.
@@ -29,8 +29,8 @@ def entropy_thresholding(
         hflm (HFLM): The huggingface LM instance with the model and tokenizer.
     
     Returns:
-        bool: Whether to continue budget forcing.
-        List[int]: The scale token to use.
+        bool: True if the model should continue reasoning.
+        List[int]: The scale token to continue reasoning with.
     """ 
     if 1 > last_k > 0:
         last_k = math.ceil(last_k * len(seq))
