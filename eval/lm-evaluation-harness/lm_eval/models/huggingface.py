@@ -35,7 +35,7 @@ from lm_eval.models.utils import (
     pad_and_concat,
     stop_sequences_criteria,
 )
-from lm_eval.budget_forcing import generate_entropy_thresholding
+from lm_eval.budget_forcing import generate_with_budget_forcing
 
 if int(os.getenv("O1INFERENCE", 0)):
     import sys
@@ -850,10 +850,10 @@ class HFLM(TemplateLM):
 
     def _model_generate(
         self, 
-        context, 
+        context: torch.Tensor, 
         max_length: int, 
-        stop_sequences: List[str], 
-        gen_function: Optional[str] = None,
+        stop_sequences: Optional[List[str]], 
+        scale_func_name: Optional[str] = None,
         **generation_kwargs
     ):
         """
@@ -862,18 +862,18 @@ class HFLM(TemplateLM):
         Args:
             context (torch.Tensor): Input tensor of shape [batch, sequence_length].
             max_length (int): Maximum length of the generated sequence.
-            stop_sequences (List[str]): List of sequences to stop generation.
-            gen_function (Optional[str]): Function to use for generation, e.g. `entropy_thresholding`.
+            stop_sequences (Optional[List[str]]): List of sequences to stop generation. Not used if O1Inference is set.
+            scale_func_name (Optional[str]): Function to use for generation, e.g. `entropy_thresholding`.
             **generation_kwargs: Additional keyword arguments for generation.
         Returns:
             torch.Tensor: Generated sequences of shape [batch, sequence_length].
         """
-        # Default `temperature`` to 0.0; remove it if not sampling to avoid HF warnings
         temperature = generation_kwargs.get("temperature", 0.0)
         # Default `do_sample` to `False` (greedy decoding) if `temperature` is 0.0
         do_sample = generation_kwargs.setdefault(
             "do_sample", temperature > 0.0
         )
+        # Remove `temperature` if not sampling to avoid HF warnings
         if not do_sample:
             generation_kwargs.pop("temperature", None)
 
@@ -887,28 +887,27 @@ class HFLM(TemplateLM):
                 context.shape[1], 
                 context.shape[0]
             )
-            
         
-        match gen_function:
-            case 'entropy_thresholding':
-                return generate_entropy_thresholding(
-                    self.model,
-                    context,               
-                    max_length=max_length,
-                    stopping_criteria=stopping_criteria,    
-                    pad_token_id=self.tokenizer.pad_token_id,
-                    **generation_kwargs
-                )
-                    
-            case _:
-                return self.model.generate(
-                    input_ids=context,
-                    max_length=max_length,
-                    stopping_criteria=stopping_criteria,
-                    pad_token_id=self.tokenizer.pad_token_id,
-                    use_cache=True,
-                    **generation_kwargs,
-                )
+        if scale_func_name:
+            return generate_with_budget_forcing(
+                self,
+                input_ids=context,
+                max_length=max_length,
+                stopping_criteria=stopping_criteria,
+                pad_token_id=self.tokenizer.pad_token_id,
+                scale_func=scale_func_name,
+                **generation_kwargs,
+            )
+        
+        else:
+            return self.model.generate(
+                input_ids=context,
+                max_length=max_length,
+                stopping_criteria=stopping_criteria,
+                pad_token_id=self.tokenizer.pad_token_id,
+                use_cache=True,
+                **generation_kwargs,
+            )
 
     def _select_cont_toks(
         self, logits: torch.Tensor, contlen: int = None, inplen: int = None

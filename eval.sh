@@ -33,15 +33,15 @@ cd eval/lm-evaluation-harness
 pip install --upgrade pip --quiet
 pip install -e .[math,vllm] --quiet
 
-OPENAI_API_KEY=$OPENAI_API_KEY PROCESSOR=$PROCESSOR VLLM_WORKER_MULTIPROC_METHOD=spawn lm_eval \
-    --model vllm \
+OPENAI_API_KEY=$OPENAI_API_KEY PROCESSOR=$PROCESSOR lm_eval \
+    --model hf \
     --model_args pretrained=simplescaling/s1.1-1.5B,dtype=float16,tensor_parallel_size=1 \
     --tasks aime24_nofigures,openai_math \
     --batch_size auto \
     --apply_chat_template \
     --output_path s1.1_1.5B_eval/$USER/$SLURM_JOB_ID \
     --log_samples \
-    --gen_kwargs "max_gen_toks=32768,max_tokens_thinking=auto"
+    --gen_kwargs "max_gen_toks=32768,max_tokens_thinking=auto,thinking_n_ignore=6,thinking_n_ignore_str=Wait
 
 echo "Job completed at $(date)"
 
