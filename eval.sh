@@ -48,7 +48,7 @@ echo "Starting s1.1-1.5B model evaluation at $(date)"
 
 OPENAI_API_KEY=$OPENAI_API_KEY PROCESSOR=$PROCESSOR lm_eval \
     --model hf \
-    --model_args pretrained=simplescaling/s1.1-1.5B,dtype=float16,tensor_parallel_size=1 \
+    --model_args pretrained=simplescaling/s1.1-1.5B,dtype=float16 \
     --tasks aime24_nofigures,openai_math \
     --batch_size auto \
     --apply_chat_template \

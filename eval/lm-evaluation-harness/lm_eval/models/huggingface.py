@@ -852,7 +852,7 @@ class HFLM(TemplateLM):
         self, 
         context: torch.Tensor, 
         max_length: int, 
-        stop_sequences: Optional[List[str]], 
+        stop_sequences: Optional[List[str]] = None,
         scale_func_name: Optional[str] = None,
         **generation_kwargs
     ):
