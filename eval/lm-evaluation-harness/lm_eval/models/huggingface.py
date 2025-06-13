@@ -895,7 +895,7 @@ class HFLM(TemplateLM):
                 max_length=max_length,
                 stopping_criteria=stopping_criteria,
                 pad_token_id=self.tokenizer.pad_token_id,
-                scale_func=scale_func_name,
+                scale_func_name=scale_func_name,
                 **generation_kwargs,
             )
         
