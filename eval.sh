@@ -16,7 +16,7 @@ mkdir -p logs
 
 source ./.env
 
-if [ ! -d "$SCRATCH/pmlr/.venv" ]; then
+if [ ! -d "$SCRATCH/csnlp/.venv" ]; then
   python3 -m venv "$SCRATCH/csnlp/.venv"
   echo "Virtual environment created at $SCRATCH/csnlp/.venv"
 fi
