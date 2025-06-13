@@ -14,24 +14,33 @@ module load stack/2024-06 gcc/12.2.0 python/3.11.6 cuda/11.3.1 eth_proxy
 
 mkdir -p logs
 
-source ./.env
-
-if [ ! -d "$SCRATCH/csnlp/.venv" ]; then
-  python3 -m venv "$SCRATCH/csnlp/.venv"
-  echo "Virtual environment created at $SCRATCH/csnlp/.venv"
-fi
-
-source "$SCRATCH/csnlp/.venv/bin/activate"
-
-echo "Starting s1.1-1.5B model evaluation"
 echo "Job started at $(date)"
 
-export HF_HOME="$SCRATCH/csnlp/model_cache"
+source ./.env
+
+VENV_PATH="$SCRATCH/csnlp/.venv"
+
+## Delete the venv
+# if [ -d "$VENV_PATH" ]; then
+#   rm -rf "$VENV_PATH"
+#   echo "Cleared existing virtual environment at $VENV_PATH at $(date)"
+# fi
+
+if [ ! -d "$VENV_PATH" ]; then
+  python3 -m venv "$VENV_PATH"
+  echo "Virtual environment created at $VENV_PATH at $(date)"
+fi
+
+source "$VENV_PATH/bin/activate"
+
+export HF_HOME="$SCRATCH/csnlp/cache"
 
 cd eval/lm-evaluation-harness
 
 pip install --upgrade pip --quiet
 pip install -e .[math,vllm] --quiet
+
+echo "Starting s1.1-1.5B model evaluation at $(date)"
 
 OPENAI_API_KEY=$OPENAI_API_KEY PROCESSOR=$PROCESSOR lm_eval \
     --model hf \
