@@ -20,25 +20,29 @@ source ./.env
 
 VENV_PATH="$SCRATCH/csnlp/.venv"
 
-## Delete the venv
-# if [ -d "$VENV_PATH" ]; then
-#   rm -rf "$VENV_PATH"
-#   echo "Cleared existing virtual environment at $VENV_PATH at $(date)"
-# fi
+export HF_HOME="$SCRATCH/csnlp/cache"
 
+cd eval/lm-evaluation-harness
+
+# RESET_ENV can also be set to "true" to force a fresh environment
 if [ ! -d "$VENV_PATH" ]; then
+  RESET_ENV="true"
+fi
+
+if [ "$RESET_ENV" == "true" ]; then
+  rm -rf "$VENV_PATH"
   python3 -m venv "$VENV_PATH"
   echo "Virtual environment created at $VENV_PATH at $(date)"
 fi
 
 source "$VENV_PATH/bin/activate"
 
-export HF_HOME="$SCRATCH/csnlp/cache"
-
-cd eval/lm-evaluation-harness
-
-pip install --upgrade pip --quiet
-pip install -e .[math,vllm] --quiet
+if [ "$RESET_ENV" == "true" ]; then
+  pip install --upgrade pip --quiet
+  pip install -e .[math,vllm] --quiet
+else
+  echo "Using existing virtual environment at $VENV_PATH"
+fi
 
 echo "Starting s1.1-1.5B model evaluation at $(date)"
 

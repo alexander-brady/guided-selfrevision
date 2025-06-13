@@ -4,14 +4,13 @@ from typing import List, Optional
 
 from transformers import StoppingCriteriaList
 
-from lm_eval.models.huggingface import HFLM
 from lm_eval.models.utils import stop_sequences_criteria
 from lm_eval.budget_forcing.utils import convert_to_tensor
 from lm_eval.budget_forcing.scaler_registry import get_scale_func
 
 
 def generate_with_budget_forcing(
-    hflm: HFLM,
+    hflm,
     input_ids: torch.Tensor,
     max_length: int,
     stopping_criteria: Optional[List[str]],

@@ -1,7 +1,6 @@
 import math
 from typing import List
 
-from lm_eval.models.huggingface import HFLM
 from lm_eval.budget_forcing.scaler_registry import should_scale_only, scale_token_only
 
 
@@ -13,7 +12,7 @@ def entropy_thresholding(
     iteration: int,
     seq: List[int],
     entropies: List[float],
-    hflm: HFLM,
+    hflm,
 ) -> bool:
     """
     Determine whether to scale the sequence based on entropy and a threshold.
