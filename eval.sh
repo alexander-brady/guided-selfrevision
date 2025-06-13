@@ -54,12 +54,7 @@ OPENAI_API_KEY=$OPENAI_API_KEY PROCESSOR=$PROCESSOR lm_eval \
     --apply_chat_template \
     --output_path s1.1_1.5B_eval/$USER/$SLURM_JOB_ID \
     --log_samples \
-    --gen_kwargs "
-      max_gen_toks=32768,
-      max_tokens_thinking=auto,
-      thinking_n_ignore=6,
-      thinking_n_ignore_str=Wait,
-      scale_func_name=entropy_thresholding" 
+    --gen_kwargs "max_gen_toks=32768,max_tokens_thinking=auto,thinking_n_ignore=6,thinking_n_ignore_str=Wait,scale_func_name=entropy_thresholding" 
 
 echo "Job completed at $(date)"
 

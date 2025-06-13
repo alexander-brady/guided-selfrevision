@@ -1,6 +1,6 @@
 import math
 import torch
-from typing import List, Optional
+from typing import List, Optional, Union
 
 from transformers import StoppingCriteriaList
 
@@ -16,6 +16,7 @@ def generate_with_budget_forcing(
     stopping_criteria: Optional[List[str]],
     pad_token_id: int,
     scale_func_name: str,
+    max_tokens_thinking: Union[int, str] = "auto",
     thinking_start: str = "<|im_start|>think",
     thinking_end: str = "<|im_start|>answer",
     thinking_n_ignore: int = 0,
@@ -34,6 +35,7 @@ def generate_with_budget_forcing(
         stopping_criteria (Optional[List[str]]): A list of stopping criteria to apply during generation.
         pad_token_id (int): The ID of the padding token used in the model.
         scale_func_name (str): The name of the scaling function to use for budget forcing.
+        max_tokens_thinking (str): The maximum number of tokens to generate during the thinking phase.
         thinking_start (str): The token to indicate the start of the thinking phase.
         thinking_end (str): The token to indicate the end of the thinking phase.
         thinking_n_ignore (int): The number of times to ignore the thinking phase.
@@ -76,15 +78,12 @@ def generate_with_budget_forcing(
     ]
     
     generation_kwargs.setdefault("min_tokens", 1)
-    if "max_tokens" in generation_kwargs:
-        if generation_kwargs["max_tokens"] == "auto":
-            # Leave 100 tokens for answer
-            max_tokens = max_length - max([len(x) for x in context]) - len(thinking_start_tok) - len(thinking_end_max_tok) - 100
-            print(f"Auto setting max_tokens_thinking to {max_tokens}")
-        else:
-            max_tokens = int(generation_kwargs["max_tokens"])
+    if max_tokens_thinking == "auto":
+        # Leave 100 tokens for answer
+        max_tokens = max_length - max([len(x) for x in context]) - len(thinking_start_tok) - len(thinking_end_max_tok) - 100
+        print(f"Auto setting max_tokens_thinking to {max_tokens}")
     else:
-        max_tokens = max_length
+        max_tokens = max_tokens_thinking
     
     scale_func = get_scale_func(
         scale_func_name, 
