@@ -1340,7 +1340,7 @@ class HFLM(TemplateLM):
             cont = self._model_generate(
                 context=context_enc,
                 attention_mask=attn_masks,
-                stop=until,
+                stop_sequences=until,
                 **kwargs,
             )
 
