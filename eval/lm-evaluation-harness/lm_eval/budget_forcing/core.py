@@ -55,29 +55,33 @@ def generate_with_budget_forcing(
     thinking_end_max = thinking_end + "\nFinal Answer:"
     thinking_end_max_tok = hflm.tok_encode(thinking_end_max)
     
-    until_thinking = [until_thinking]
-    if until_thinking_2 is not None:
-        until_thinking.append(until_thinking_2)
-    until_thinking_stop_seq = stop_sequences_criteria(
-        hflm.tok_encode(until_thinking),
-        hflm.tokenizer,
-        input_ids.shape[0],
-        input_ids.shape[1]
+    until_thinking = [until_thinking] + (
+        [until_thinking_2] if until_thinking_2 is not None else []
     )
+
+    # TODO: Buggy, so commented out for now
+    # print(until_thinking, flush=True)
+    # until_thinking_stop_seq = stop_sequences_criteria(
+    #     hflm.tokenizer,
+    #     until_thinking,
+    #     input_ids.shape[1],
+    #     input_ids.shape[0]
+    # )
     
-    end_thinking_criterion = StoppingCriteriaList(
-        until_thinking_stop_seq + stopping_criteria
-    )
-        
-    until_thinking_tok = hflm.tok_encode(until_thinking)
-    assert all((len(x) == 1 for x in until_thinking_tok)), "min_tokens_thinking only supports until_thinking tokens that are 1 token long"
+    # if stopping_criteria:
+    #     end_thinking_criterion = StoppingCriteriaList(
+    #         until_thinking_stop_seq + stopping_criteria 
+    #     )
+    # else:
+    #     end_thinking_criterion = StoppingCriteriaList(until_thinking_stop_seq)
+    end_thinking_criterion = stopping_criteria
     
     context = [
         req + thinking_start_tok 
         for req in input_ids.tolist()
     ]
     
-    generation_kwargs.setdefault("min_tokens", 1)
+    generation_kwargs.setdefault("min_length", 1)
     if max_tokens_thinking == "auto":
         # Leave 100 tokens for answer
         max_tokens = max_length - max([len(x) for x in context]) - len(thinking_start_tok) - len(thinking_end_max_tok) - 100
@@ -100,7 +104,7 @@ def generate_with_budget_forcing(
         
         sequences, entropies = _generate_with_entropy(
             hflm.model,
-            input_ids=input_ids[indices],
+            input_ids=input_ids,
             pad_token_id=pad_token_id,
             stopping_criteria=end_thinking_criterion,
             **generation_kwargs,
