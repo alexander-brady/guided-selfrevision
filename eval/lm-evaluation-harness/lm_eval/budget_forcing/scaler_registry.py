@@ -1,4 +1,4 @@
-from functools import partial, wraps
+from functools import partial
 from typing import Callable, List
 
 from lm_eval.budget_forcing.scalers import entropy_thresholding
@@ -21,12 +21,16 @@ def get_scale_func(func_name: str, scale_token: List[int], **kwargs) -> Callable
         return True, scale_token
     
     if func_name == "entropy_thresholding":
+        threshold = kwargs.pop("threshold", 0.001)
+        decay_factor = kwargs.pop("decay_factor", 1.0)
+        last_k = kwargs.pop("last_k", -1)
+        print(f"Using entropy thresholding with threshold={threshold}, decay_factor={decay_factor}, last_k={last_k}")
         return partial(
             entropy_thresholding,
             scale_token=scale_token,
-            threshold=kwargs.pop("threshold", 0.5),
-            decay_factor=kwargs.pop("decay_factor", 1.0),
-            last_k=kwargs.pop("last_k", -1),
+            threshold=threshold,
+            decay_factor=decay_factor,
+            last_k=last_k
         )
     
     return default_scale_func

@@ -6,7 +6,7 @@
 #SBATCH --mem-per-cpu=16G
 #SBATCH --nodes=1
 #SBATCH --gpus-per-node=1
-#SBATCH --gres=gpumem:16g
+#SBATCH --gres=gpumem:64g
 #SBATCH --time=24:00:00
 #SBATCH --mail-type=END,FAIL
 
@@ -49,7 +49,7 @@ echo "Starting s1.1-1.5B model evaluation at $(date)"
 OPENAI_API_KEY=$OPENAI_API_KEY PROCESSOR=$PROCESSOR lm_eval \
     --model hf \
     --model_args "pretrained=simplescaling/s1.1-1.5B,dtype=float16,max_length=32768" \
-    --tasks aime24_nofigures,openai_math \
+    --tasks openai_math \
     --batch_size auto \
     --apply_chat_template \
     --output_path s1_1_1_5B_eval/$USER/$SLURM_JOB_ID \

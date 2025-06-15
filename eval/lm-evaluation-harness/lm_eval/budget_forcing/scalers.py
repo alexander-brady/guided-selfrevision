@@ -64,6 +64,11 @@ def entropy_thresholding(
         entropies = entropies[-last_k:]
         
     avg_entropy = sum(entropies) / len(entropies) if entropies else 0.0
+    
+    print(f"Average Entropy: {avg_entropy}, {iteration=}")
+    print(f"Entropies: {entropies}")
+    print('-' * 20)
+    
     return avg_entropy < (1 - (threshold * (decay_factor ** iteration)))
 
 

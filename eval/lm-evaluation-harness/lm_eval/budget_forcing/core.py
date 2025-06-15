@@ -95,6 +95,9 @@ def generate_with_budget_forcing(
     )
     indices = list(range(len(context)))
     for i in range(thinking_n_ignore + 1):
+        if not indices:
+            break # No more sequences to process
+        
         input_ids, attention_mask = convert_to_tensor(
             context,
             pad_token_id=pad_token_id,
