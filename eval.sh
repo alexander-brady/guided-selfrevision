@@ -48,11 +48,11 @@ echo "Starting s1.1-1.5B model evaluation at $(date)"
 
 OPENAI_API_KEY=$OPENAI_API_KEY PROCESSOR=$PROCESSOR lm_eval \
     --model hf \
-    --model_args pretrained=simplescaling/s1.1-1.5B,dtype=float16 \
+    --model_args "pretrained=simplescaling/s1.1-1.5B,dtype=float16,max_length=32768" \
     --tasks aime24_nofigures,openai_math \
     --batch_size auto \
     --apply_chat_template \
-    --output_path s1.1_1.5B_eval/$USER/$SLURM_JOB_ID \
+    --output_path s1_1_1_5B_eval/$USER/$SLURM_JOB_ID \
     --log_samples \
     --gen_kwargs "max_gen_toks=32768,max_tokens_thinking=auto,thinking_n_ignore=6,thinking_n_ignore_str=Wait,scale_func_name=entropy_thresholding" 
 

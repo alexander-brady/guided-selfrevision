@@ -702,7 +702,7 @@ class HFLM(TemplateLM):
                 revision=revision,
                 trust_remote_code=trust_remote_code,
                 use_fast=use_fast_tokenizer,
-            )
+            )            
         return None
 
     def _detect_batch_size(self, requests=None, pos: int = 0):
@@ -810,13 +810,14 @@ class HFLM(TemplateLM):
             return_tensors="pt",
             **add_special_tokens,
         )
+
         if left_truncate_len:
             encoding["input_ids"] = encoding["input_ids"][:, -left_truncate_len:]
             encoding["attention_mask"] = encoding["attention_mask"][
                 :, -left_truncate_len:
             ]
         self.tokenizer.padding_side = old_padding_side
-
+        
         return encoding["input_ids"], encoding["attention_mask"]
 
     def tok_decode(self, tokens, skip_special_tokens=True):
@@ -879,7 +880,7 @@ class HFLM(TemplateLM):
 
         if int(os.getenv("O1INFERENCE", 0)):
             print("O1INFERENCE is set")
-            stopping_criteria = None
+            stopping_criteria = stop_sequences = None
         else:
             stopping_criteria = stop_sequences_criteria(
                 self.tokenizer, 
@@ -893,7 +894,7 @@ class HFLM(TemplateLM):
                 self,
                 input_ids=context,
                 max_length=max_length,
-                stopping_criteria=stopping_criteria,
+                stop_sequences=stop_sequences,
                 pad_token_id=self.tokenizer.pad_token_id,
                 scale_func_name=scale_func_name,
                 **generation_kwargs,
@@ -1323,8 +1324,8 @@ class HFLM(TemplateLM):
             elif self.AUTO_MODEL_CLASS == transformers.AutoModelForSeq2SeqLM:
                 # max len for inputs = encoder's whole max_length
                 max_ctx_len = self.max_length
-
-            # encode, pad, and truncate contexts for this batch
+                
+            # encode, pad, and truncate contexts for this batch            
             context_enc, attn_masks = self.tok_batch_encode(
                 contexts,
                 left_truncate_len=max_ctx_len,

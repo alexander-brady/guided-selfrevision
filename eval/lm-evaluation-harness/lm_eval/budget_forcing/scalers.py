@@ -65,3 +65,29 @@ def entropy_thresholding(
         
     avg_entropy = sum(entropies) / len(entropies) if entropies else 0.0
     return avg_entropy < (1 - (threshold * (decay_factor ** iteration)))
+
+
+def uncertainty_driven_pondering(
+    min_seq_length: int,
+    threshold: int,
+    iteration: int,
+    seq: List[int],
+    entropies: List[float],
+    hflm,     
+):
+    """
+    Targeted reevaluation of low-certainty statements.
+    
+    Args:
+        seq (List[int]): The sequence of tokens.
+        entropies (List[float]): The entropy for each generated token of the sequence.
+        scale_token (List[int]): The token to reevaluation_statementuse for scaling.
+        hflm (HFLM): The huggingface LM instance with the model and tokenizer.
+    
+    Returns:
+        bool: True if the model should continue reasoning.
+        List[int]: The scale token to continue reasoning with.
+    """ 
+    pass
+    # tokens_to_reevaluate = []
+    # hflm.tokens_to_str

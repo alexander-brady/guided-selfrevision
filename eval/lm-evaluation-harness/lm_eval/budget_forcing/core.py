@@ -13,7 +13,7 @@ def generate_with_budget_forcing(
     hflm,
     input_ids: torch.Tensor,
     max_length: int,
-    stopping_criteria: Optional[List[str]],
+    stop_sequences: Optional[List[str]],
     pad_token_id: int,
     scale_func_name: str,
     max_tokens_thinking: Union[int, str] = "auto",
@@ -32,7 +32,7 @@ def generate_with_budget_forcing(
         hflm (HFLM): The Hugging Face language model to use for generation.
         input_ids (torch.Tensor): The input token ids as a tensor.
         max_length (int): The maximum length of the generated text (in tokens, including input).
-        stopping_criteria (Optional[List[str]]): A list of stopping criteria to apply during generation.
+        stop_sequences (Optional[List[str]]): A list of stopping criteria to apply during generation.
         pad_token_id (int): The ID of the padding token used in the model.
         scale_func_name (str): The name of the scaling function to use for budget forcing.
         max_tokens_thinking (str): The maximum number of tokens to generate during the thinking phase.
@@ -74,7 +74,6 @@ def generate_with_budget_forcing(
     #     )
     # else:
     #     end_thinking_criterion = StoppingCriteriaList(until_thinking_stop_seq)
-    end_thinking_criterion = stopping_criteria
     
     context = [
         req + thinking_start_tok 
@@ -96,17 +95,27 @@ def generate_with_budget_forcing(
     )
     indices = list(range(len(context)))
     for i in range(thinking_n_ignore + 1):
-        input_ids = convert_to_tensor(
+        input_ids, attention_mask = convert_to_tensor(
             context,
             pad_token_id=pad_token_id,
             device=hflm.device,
-        )[indices]
+            max_tokens=max_length
+        )
+        input_ids = input_ids[indices]
+        generation_kwargs["attention_mask"] = attention_mask[indices]
+        
+        end_thinking_criteria = stop_sequences_criteria(
+            hflm.tokenizer, 
+            stop_sequences, 
+            input_ids.shape[1], 
+            input_ids.shape[0]
+        ) if stop_sequences else None
         
         sequences, entropies = _generate_with_entropy(
             hflm.model,
             input_ids=input_ids,
             pad_token_id=pad_token_id,
-            stopping_criteria=end_thinking_criterion,
+            stopping_criteria=end_thinking_criteria,
             **generation_kwargs,
         )
         
@@ -127,11 +136,21 @@ def generate_with_budget_forcing(
         else:
             context[i] = output + thinking_end_tok
     
-    input_ids = convert_to_tensor(
+    input_ids, attention_mask = convert_to_tensor(
         context,
         pad_token_id=pad_token_id,
         device=hflm.device,
+        max_tokens=max_length
     )
+    generation_kwargs["attention_mask"] = attention_mask
+    
+    stopping_criteria = stop_sequences_criteria(
+        hflm.tokenizer, 
+        stop_sequences, 
+        input_ids.shape[1], 
+        input_ids.shape[0]
+    ) if stop_sequences else None
+    
     return hflm.model.generate(
         input_ids=input_ids,
         max_length=max_length,
@@ -169,9 +188,9 @@ def _generate_with_entropy(
     """
     outputs = model.generate(
         input_ids=input_ids,
-        pad_token_id=pad_token_id,
         max_length=max_tokens,
         stopping_criteria=stopping_criteria,
+        pad_token_id=pad_token_id,
         use_cache=True,
         return_dict_in_generate=True,
         output_scores=True,
