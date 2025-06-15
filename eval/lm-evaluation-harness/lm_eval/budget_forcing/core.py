@@ -199,6 +199,7 @@ def _generate_with_entropy(
     
     entropies = []
     for score in outputs.scores:
+        curr = []
         for logits in score:
             mask = logits != float("-inf")
             filtered = logits[mask]
@@ -209,6 +210,7 @@ def _generate_with_entropy(
                 max_entropy = math.log(mask.sum().item())
                 entropy = entropy / max_entropy if max_entropy > 0 else 0.0
                 
-            entropies.append(entropy)
+            curr.append(entropy)
+        entropies.append(curr)
     
     return outputs.sequences, entropies

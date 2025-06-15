@@ -13,7 +13,7 @@ def should_scale_only(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
         scale_token = kwargs.pop('scale_token')
-        return scale_token, func(*args, **kwargs)
+        return func(*args, **kwargs), scale_token
     
     return wrapper
 

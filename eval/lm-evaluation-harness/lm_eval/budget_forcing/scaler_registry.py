@@ -14,7 +14,7 @@ def get_scale_func(func_name: str, scale_token: List[int], **kwargs) -> Callable
         **kwargs: Additional arguments for the scaling function.
         
     Returns:
-        Callable: The scaling function.
+        Callable: The scaling function, returns (bool, List[int]) indicating whether to scale and the scale token id.
     """
     def default_scale_func(*_, **__):
         """Always scale with default scale token."""
