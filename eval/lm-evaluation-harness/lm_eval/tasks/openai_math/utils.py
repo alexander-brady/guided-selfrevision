@@ -8,8 +8,18 @@ import datasets
 
 from lm_eval.utils import eval_logger
 
+# Import step-wise metrics function
+try:
+    from lm_eval.budget_forcing.scalers import print_stepwise_metrics, get_stepwise_metrics
+    _STEPWISE_AVAILABLE = True
+except ImportError:
+    _STEPWISE_AVAILABLE = False
+    print("Note: Step-wise uncertainty metrics not available")
+
 if os.getenv("PROMPTSTEP") is not None:
-    QUERY_TEMPLATE = '{Question}\n\nThink for up to ' + os.getenv("PROMPTSTEP") + ' steps.'
+    QUERY_TEMPLATE = '{Question}\n\nSolve this step by step. Number each step clearly (Step 1:, Step 2:, etc.) and think for up to ' + os.getenv("PROMPTSTEP") + ' steps.'
+elif os.getenv("PROMPTNUMBERED") is not None:
+    QUERY_TEMPLATE = '{Question}\n\nSolve this step by step. Number each step clearly (Step 1:, Step 2:, etc.) and show your reasoning process.'
 elif os.getenv("PROMPTTOKEN") is not None:
     QUERY_TEMPLATE = '{Question}\n\nThink for up to ' + os.getenv("PROMPTTOKEN") + ' tokens.'
 elif os.getenv("PROMPTLONG") is not None:
@@ -316,6 +326,26 @@ def process_results(doc: dict, results: List[str]) -> Dict[str, int]:
                 metrics[f"cov@{i}"] = int(1 in metrics["exact_matches"])
                 metrics[f"maj@{i}"] = int(gt == Counter(metrics["extracted_answers"]).most_common(1)[0][0])
 
+    # Add step-wise uncertainty metrics to results if available
+    if _STEPWISE_AVAILABLE:
+        try:
+            stepwise_metrics = get_stepwise_metrics()
+            if stepwise_metrics["total_calls"] > 0:
+                metrics.update({
+                    "stepwise_total_calls": stepwise_metrics["total_calls"],
+                    "stepwise_success_rate": stepwise_metrics["success_rate"], 
+                    "stepwise_parsing_failures": stepwise_metrics["parsing_failures"],
+                    "stepwise_steps_found_total": stepwise_metrics["steps_found_total"],
+                    "stepwise_steps_revised_total": stepwise_metrics["steps_revised_total"],
+                    "stepwise_avg_steps_per_call": stepwise_metrics["avg_steps_per_call"],
+                })
+                
+                # Print detailed metrics on first result processing
+                if len(results) == 1:  # Only print on single result (not batch)
+                    print_stepwise_metrics()
+        except Exception as e:
+            print(f"Warning: Failed to get step-wise metrics: {e}")
+    
     return metrics
 
 def last_boxed_only_string(string: str) -> Optional[str]:

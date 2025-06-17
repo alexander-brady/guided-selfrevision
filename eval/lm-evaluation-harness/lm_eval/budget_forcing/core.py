@@ -88,11 +88,31 @@ def generate_with_budget_forcing(
     else:
         max_tokens = max_tokens_thinking
     
+    # Extract scaling function parameters before creating the scale function
+    # This prevents them from being passed to the model's generate method
+    scale_func_kwargs = {}
+    custom_scale_params = [
+        # step_wise_uncertainty_driven parameters
+        'step_selection_strategy', 'max_steps', 'use_min_uncertainty_filter', 
+        'min_step_uncertainty', 'threshold',
+        # entropy_thresholding parameters  
+        'decay_factor', 'last_k',
+        # Any other custom scaling parameters
+        'scale_token'
+    ]
+    
+    # Extract custom parameters for scale function
+    for param in custom_scale_params:
+        if param in generation_kwargs:
+            scale_func_kwargs[param] = generation_kwargs.pop(param)
+    
+    # Create scale function with extracted parameters
     scale_func = get_scale_func(
         scale_func_name, 
         scale_token=thinking_n_ignore_str_tok,
-        **generation_kwargs
+        **scale_func_kwargs
     )
+    
     indices = list(range(len(context)))
     for i in range(thinking_n_ignore + 1):
         if not indices:
@@ -114,6 +134,7 @@ def generate_with_budget_forcing(
             input_ids.shape[0]
         ) if stop_sequences else None
         
+        # Now generation_kwargs only contains parameters that HuggingFace understands
         sequences, entropies = _generate_with_entropy(
             hflm.model,
             input_ids=input_ids,
@@ -154,6 +175,7 @@ def generate_with_budget_forcing(
         input_ids.shape[0]
     ) if stop_sequences else None
     
+    # Final generation also uses cleaned generation_kwargs
     return hflm.model.generate(
         input_ids=input_ids,
         max_length=max_length,
@@ -186,8 +208,8 @@ def _generate_with_entropy(
         **generation_kwargs: Additional keyword arguments for the model's generate method.
         
     Returns:
-        List[List[int]]: The generated sequences as a list of token IDs.
-        List[List[float]]: The entropy values for each generated token.
+        List[torch.Tensor]: The generated sequences as a list of tensors.
+        List[List[float]]: The entropy values for each sequence.
     """
     outputs = model.generate(
         input_ids=input_ids,
@@ -200,7 +222,8 @@ def _generate_with_entropy(
         **generation_kwargs,
     )
     
-    entropies = []
+    # Calculate entropies per token position
+    token_entropies = []
     for score in outputs.scores:
         curr = []
         for logits in score:
@@ -214,6 +237,17 @@ def _generate_with_entropy(
                 entropy = entropy / max_entropy if max_entropy > 0 else 0.0
                 
             curr.append(entropy)
-        entropies.append(curr)
+        token_entropies.append(curr)
     
-    return outputs.sequences, entropies
+    # Transpose to get entropies per sequence
+    batch_size = outputs.sequences.shape[0]
+    sequence_entropies = []
+    
+    for i in range(batch_size):
+        seq_entropies = []
+        for token_pos in range(len(token_entropies)):
+            if i < len(token_entropies[token_pos]):
+                seq_entropies.append(token_entropies[token_pos][i])
+        sequence_entropies.append(seq_entropies)
+    
+    return outputs.sequences, sequence_entropies

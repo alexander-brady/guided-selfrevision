@@ -1,4 +1,5 @@
 #!/bin/bash
+#!/bin/bash
 #SBATCH --job-name=s1_eval_job
 #SBATCH --output=logs/s1_eval_%j.out
 #SBATCH --error=logs/s1_eval_%j.err
