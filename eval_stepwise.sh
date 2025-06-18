@@ -60,6 +60,9 @@ MAX_STEPS=8                                    # Maximum number of reasoning ste
 USE_MIN_UNCERTAINTY_FILTER="false"            # Set to "true" to enable threshold filtering
 MIN_STEP_UNCERTAINTY=0.3                      # Only used if USE_MIN_UNCERTAINTY_FILTER=true
 
+# Enable DEBUG logging for detailed step-wise uncertainty analysis
+export LOGLEVEL=DEBUG
+
 echo "📋 Configuration:"
 echo "   Model: $MODEL_NAME"
 echo "   Step selection strategy: $STEP_SELECTION_STRATEGY"
@@ -71,18 +74,36 @@ else
     echo "   Min step uncertainty threshold: DISABLED (always revise most uncertain step)"
 fi
 echo "   Output path: $OUTPUT_PATH"
+echo "   Debug logging: ENABLED (LOGLEVEL=$LOGLEVEL)"
 
 OPENAI_API_KEY=$OPENAI_API_KEY PROCESSOR=$PROCESSOR lm_eval \
-    --model hf \
-    --model_args "pretrained=$MODEL_NAME,dtype=float16,max_length=32768" \
+    --model vllm \
+    --model_args "pretrained=$MODEL_NAME,dtype=float16,max_model_len=32768,gpu_memory_utilization=0.9" \
     --tasks openai_math \
     --batch_size auto \
     --apply_chat_template \
     --output_path $OUTPUT_PATH \
     --log_samples \
-    --gen_kwargs "max_gen_toks=32768,max_tokens_thinking=auto,thinking_n_ignore=6,scale_func_name=step_wise_uncertainty_driven,step_selection_strategy=$STEP_SELECTION_STRATEGY,max_steps=$MAX_STEPS,use_min_uncertainty_filter=$USE_MIN_UNCERTAINTY_FILTER,min_step_uncertainty=$MIN_STEP_UNCERTAINTY" 
+    --verbosity DEBUG \
+    --gen_kwargs "max_gen_toks=32768,max_tokens_thinking=auto,thinking_n_ignore=6,scale_func_name=step_wise_uncertainty_driven,step_selection_strategy=$STEP_SELECTION_STRATEGY,max_steps=$MAX_STEPS,use_min_uncertainty_filter=$USE_MIN_UNCERTAINTY_FILTER,min_step_uncertainty=$MIN_STEP_UNCERTAINTY,debug=true" \
+    --limit 10
 
 echo "✅ Step-wise uncertainty evaluation completed at $(date)"
+
+echo "📊 Collecting step-wise uncertainty metrics..."
+python - <<'PY'
+try:
+    import sys
+    sys.path.insert(0, '.')
+    import lm_eval.budget_forcing.scalers as scalers
+    print("\n" + "="*80)
+    print("📊 STEP-WISE UNCERTAINTY FINAL METRICS")
+    print("="*80)
+    scalers.print_stepwise_metrics()
+    print("="*80)
+except Exception as e:
+    print(f"⚠️  Could not collect metrics: {e}")
+PY
 
 echo "📊 Final results saved to: $OUTPUT_PATH"
 

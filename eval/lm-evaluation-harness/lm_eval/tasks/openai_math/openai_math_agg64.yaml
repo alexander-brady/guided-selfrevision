@@ -65,5 +65,23 @@ metric_list:
   - metric: exact_matches
     aggregation: bypass
     higher_is_better: true
+  - metric: stepwise_total_calls
+    aggregation: bypass
+    higher_is_better: true
+  - metric: stepwise_success_rate
+    aggregation: bypass
+    higher_is_better: true
+  - metric: stepwise_parsing_failures
+    aggregation: bypass
+    higher_is_better: true
+  - metric: stepwise_steps_found_total
+    aggregation: bypass
+    higher_is_better: true
+  - metric: stepwise_steps_revised_total
+    aggregation: bypass
+    higher_is_better: true
+  - metric: stepwise_avg_steps_per_call
+    aggregation: bypass
+    higher_is_better: true
 metadata:
   version: 1.0

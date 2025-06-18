@@ -1,6 +1,7 @@
 from functools import partial
 from typing import Callable, List
 import traceback
+import os
 
 from lm_eval.budget_forcing.scalers import entropy_thresholding, step_wise_uncertainty_driven
 
@@ -54,8 +55,10 @@ def get_scale_func(func_name: str, scale_token: List[int], **kwargs) -> Callable
                 
                 # Validate the result format
                 if not isinstance(result, tuple) or len(result) != 2:
-                    print(f"⚠️  SCALE FUNCTION ERROR: {func_name} returned invalid format: {result}")
-                    print(f"   Expected: (bool, List[int]), got: {type(result)}")
+                    error_msg = f"SCALE FUNCTION ERROR: {func_name} returned invalid format: {result}. Expected: (bool, List[int]), got: {type(result)}"
+                    print(f"⚠️  {error_msg}")
+                    if os.getenv("RAISE_ON_SCALER_ERROR", "0") == "1":
+                        raise ValueError(error_msg)
                     print(f"   Falling back to default behavior")
                     return True, scale_token
                 
@@ -78,7 +81,8 @@ def get_scale_func(func_name: str, scale_token: List[int], **kwargs) -> Callable
                 return continue_scaling, tokens
                 
             except Exception as e:
-                print(f"⚠️  SCALE FUNCTION EXCEPTION in {func_name}: {e}")
+                error_msg = f"SCALE FUNCTION EXCEPTION in {func_name}: {e}"
+                print(f"⚠️  {error_msg}")
                 print(f"   Iteration: {iteration}")
                 print(f"   Seq type: {type(seq)}, length: {len(seq) if hasattr(seq, '__len__') else 'unknown'}")
                 print(f"   Entropies type: {type(entropies)}, length: {len(entropies) if hasattr(entropies, '__len__') else 'unknown'}")
@@ -89,6 +93,10 @@ def get_scale_func(func_name: str, scale_token: List[int], **kwargs) -> Callable
                 tb_lines = traceback.format_exc().strip().split('\n')
                 for line in tb_lines[-3:]:
                     print(f"     {line}")
+                
+                # Check if we should raise instead of falling back
+                if os.getenv("RAISE_ON_SCALER_ERROR", "0") == "1":
+                    raise RuntimeError(f"Scaler error in {func_name}: {e}") from e
                 
                 print(f"   Falling back to default behavior")
                 return True, scale_token
