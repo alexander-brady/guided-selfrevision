@@ -2,20 +2,18 @@ import math
 import torch
 from typing import List, Optional, Union
 
-from transformers import StoppingCriteriaList
+from vllm import SamplingParams
 
-from lm_eval.models.utils import stop_sequences_criteria
-from lm_eval.budget_forcing.utils import convert_to_tensor
 from lm_eval.budget_forcing.scaler_registry import get_scale_func
 
 
 def generate_with_budget_forcing(
-    hflm,
-    input_ids: torch.Tensor,
-    max_length: int,
+    lm,
+    requests: List[List[int]],
+    max_tokens: int,
     stop_sequences: Optional[List[str]],
-    pad_token_id: int,
     scale_func_name: str,
+    debug: bool = False,
     max_tokens_thinking: Union[int, str] = "auto",
     thinking_start: str = "<|im_start|>think",
     thinking_end: str = "<|im_start|>answer",
@@ -23,15 +21,15 @@ def generate_with_budget_forcing(
     thinking_n_ignore_str: str = "Wait",
     until_thinking: str = "<|im_start|>",
     until_thinking_2: Optional[str] = None,
-    **generation_kwargs,
+    **kwargs,
 ):
     """
     Generate text with budget forcing, forcing the model to think before answering.
     
     Args:
-        hflm (HFLM): The Hugging Face language model to use for generation.
-        input_ids (torch.Tensor): The input token ids as a tensor.
-        max_length (int): The maximum length of the generated text (in tokens, including input).
+        lm: The language model wrapper to use for generation.
+        requests (List[List[int]]): A list of input sequences as token ids to generate from.
+        max_tokens (int): The maximum length of the generated text (including input).
         stop_sequences (Optional[List[str]]): A list of stopping criteria to apply during generation.
         pad_token_id (int): The ID of the padding token used in the model.
         scale_func_name (str): The name of the scaling function to use for budget forcing.
@@ -42,75 +40,41 @@ def generate_with_budget_forcing(
         thinking_n_ignore_str (str): The string token to use for ignoring the thinking phase.
         until_thinking (str): The token to stop generation until the thinking phase is reached.
         until_thinking_2 (Optional[str]): An additional token to stop generation until the thinking phase is reached.
-        **generation_kwargs: Additional keyword arguments for the model's generate method.
+        **kwargs: Additional keyword arguments for the model's scale function or generate method.
         
     Returns:
         torch.Tensor: The generated text as a tensor of token ids.
     """
-    thinking_n_ignore_str_tok = hflm.tok_encode(thinking_n_ignore_str)
+    default_scale_tok = lm.tok_encode(thinking_n_ignore_str)
     
-    thinking_start_tok = hflm.tok_encode(thinking_start)
-    thinking_end_tok = hflm.tok_encode(thinking_end)
+    thinking_start_tok = lm.tok_encode(thinking_start)
+    thinking_end_tok = lm.tok_encode(thinking_end)
     
     thinking_end_max = thinking_end + "\nFinal Answer:"
-    thinking_end_max_tok = hflm.tok_encode(thinking_end_max)
+    thinking_end_max_tok = lm.tok_encode(thinking_end_max)
     
     until_thinking = [until_thinking] + (
         [until_thinking_2] if until_thinking_2 is not None else []
     )
-
-    # TODO: Buggy, so commented out for now
-    # print(until_thinking, flush=True)
-    # until_thinking_stop_seq = stop_sequences_criteria(
-    #     hflm.tokenizer,
-    #     until_thinking,
-    #     input_ids.shape[1],
-    #     input_ids.shape[0]
-    # )
-    
-    # if stopping_criteria:
-    #     end_thinking_criterion = StoppingCriteriaList(
-    #         until_thinking_stop_seq + stopping_criteria 
-    #     )
-    # else:
-    #     end_thinking_criterion = StoppingCriteriaList(until_thinking_stop_seq)
     
     context = [
         req + thinking_start_tok 
-        for req in input_ids.tolist()
+        for req in requests
     ]
     
-    generation_kwargs.setdefault("min_length", 1)
+    kwargs.setdefault("min_length", 1)
     if max_tokens_thinking == "auto":
         # Leave 100 tokens for answer
-        max_tokens = max_length - max([len(x) for x in context]) - len(thinking_start_tok) - len(thinking_end_max_tok) - 100
+        max_tokens -= max([len(x) for x in context]) - len(thinking_start_tok) - len(thinking_end_max_tok) - 100
         print(f"Auto setting max_tokens_thinking to {max_tokens}")
     else:
         max_tokens = max_tokens_thinking
     
-    # Extract scaling function parameters before creating the scale function
-    # This prevents them from being passed to the model's generate method
-    scale_func_kwargs = {}
-    custom_scale_params = [
-        # step_wise_uncertainty_driven parameters
-        'step_selection_strategy', 'max_steps', 'use_min_uncertainty_filter', 
-        'min_step_uncertainty', 'threshold',
-        # entropy_thresholding parameters  
-        'decay_factor', 'last_k',
-        # Any other custom scaling parameters
-        'scale_token'
-    ]
-    
-    # Extract custom parameters for scale function
-    for param in custom_scale_params:
-        if param in generation_kwargs:
-            scale_func_kwargs[param] = generation_kwargs.pop(param)
-    
     # Create scale function with extracted parameters
     scale_func = get_scale_func(
         scale_func_name, 
-        scale_token=thinking_n_ignore_str_tok,
-        **scale_func_kwargs
+        scale_token=default_scale_tok,
+        **kwargs
     )
     
     indices = list(range(len(context)))
@@ -118,40 +82,31 @@ def generate_with_budget_forcing(
         if not indices:
             break # No more sequences to process
         
-        input_ids, attention_mask = convert_to_tensor(
-            context,
-            pad_token_id=pad_token_id,
-            device=hflm.device,
-            max_tokens=max_length
-        )
-        input_ids = input_ids[indices]
-        generation_kwargs["attention_mask"] = attention_mask[indices]
-        
-        end_thinking_criteria = stop_sequences_criteria(
-            hflm.tokenizer, 
-            stop_sequences, 
-            input_ids.shape[1], 
-            input_ids.shape[0]
-        ) if stop_sequences else None
-        
-        # Now generation_kwargs only contains parameters that HuggingFace understands
-        sequences, entropies = _generate_with_entropy(
-            hflm.model,
-            input_ids=input_ids,
-            pad_token_id=pad_token_id,
-            stopping_criteria=end_thinking_criteria,
-            **generation_kwargs,
+        requests = [context[i] for i in indices]
+        outputs, uncertainties = _generate_with_uncertainty(
+            lm,
+            prompt_token_ids=requests,
+            max_tokens=max_tokens,
+            stop_sequences=stop_sequences,
+            **kwargs
         )
         
         new_indices = []
-        for idx, seq, entropy in zip(indices, sequences, entropies):
+        for idx, out, unc in zip(indices, outputs, uncertainties):
+            full_sequence = context[idx] + out.outputs[0].token_ids
             keep_scaling, scale_token = scale_func(
-                iteration=i, seq=seq, entropies=entropy, hflm=hflm,
+                iteration=i,
+                seq=full_sequence,
+                uncertainties=unc,
+                hflm=lm
             )
                 
-            if keep_scaling and len(seq) + len(scale_token) < max_tokens:
+            if keep_scaling and len(full_sequence) + len(scale_token) < max_tokens:
+                context[idx] = full_sequence + scale_token
                 new_indices.append(idx)
-                context[idx] = seq.tolist() + scale_token
+            else:
+                context[idx] = full_sequence
+                
         indices = new_indices
         
     for i, output in enumerate(context):
@@ -159,95 +114,70 @@ def generate_with_budget_forcing(
             context[i] = output + thinking_end_max_tok
         else:
             context[i] = output + thinking_end_tok
-    
-    input_ids, attention_mask = convert_to_tensor(
-        context,
-        pad_token_id=pad_token_id,
-        device=hflm.device,
-        max_tokens=max_length
+
+    sampling_params = SamplingParams(
+        max_tokens=max_tokens,
+        stop=stop_sequences,
+        **kwargs
     )
-    generation_kwargs["attention_mask"] = attention_mask
-    
-    stopping_criteria = stop_sequences_criteria(
-        hflm.tokenizer, 
-        stop_sequences, 
-        input_ids.shape[1], 
-        input_ids.shape[0]
-    ) if stop_sequences else None
-    
-    # Final generation also uses cleaned generation_kwargs
-    return hflm.model.generate(
-        input_ids=input_ids,
-        max_length=max_length,
-        pad_token_id=pad_token_id,
-        stopping_criteria=stopping_criteria,
-        use_cache=True,
-        **generation_kwargs,
+    return lm.model.generate(
+        prompt_token_ids=context,
+        sampling_params=sampling_params,
+        use_tqdm=lm.batch_size == "auto"
     )
     
     
-def _generate_with_entropy(
-    model,
-    input_ids: torch.Tensor,
-    pad_token_id: int,
-    stopping_criteria: StoppingCriteriaList,
-    max_tokens: int = 32768,
-    normalize: bool = True,
+def _generate_with_uncertainty(
+    lm,
+    prompt_token_ids: List[List[int]],
+    max_tokens: int,
+    stop_sequences: Optional[List[str]],
     **generation_kwargs,
 ):
     """
     Generate text using a Hugging Face model, returning entropy values for each generated token.
     
     Args:
-        model: Hugging Face language model to use for generation.
-        input_ids (torch.Tensor): The input token ids as a tensor. 
-        pad_token_id (int): The ID of the padding token used in the model.
-        stopping_criteria (StoppingCriteriaList): A list of stopping criteria to apply during generation.
-        max_tokens (int): The maximum length of the generated text.
+        lm: Language model wrapper to use for generation.
+        prompt_token_ids (List[List[int]]): The input token ids as to generate from.
+        max_tokens (int): The maximum length of the generated text. 
+        stop_sequences (Optional[List[str]]): A list of stopping criteria to apply during generation.
         normalize (bool): Whether to normalize the entropy values to a range of [0, 1].
         **generation_kwargs: Additional keyword arguments for the model's generate method.
         
     Returns:
-        List[torch.Tensor]: The generated sequences as a list of tensors.
+        List[vllm.RequestOutput]: The generated sequences as a list of tensors.
         List[List[float]]: The entropy values for each sequence.
     """
-    outputs = model.generate(
-        input_ids=input_ids,
-        max_length=max_tokens,
-        stopping_criteria=stopping_criteria,
-        pad_token_id=pad_token_id,
-        use_cache=True,
-        return_dict_in_generate=True,
-        output_scores=True,
-        **generation_kwargs,
+    generation_kwargs = generation_kwargs.copy()
+    generation_kwargs["logprobs"] = generation_kwargs.get("logprobs", 1)
+    
+    sampling_params = SamplingParams(
+        max_tokens=max_tokens,
+        stop=stop_sequences,
+        **generation_kwargs
+    )
+            
+    outputs = lm.model.generate(
+        prompt_token_ids=prompt_token_ids,
+        sampling_params=sampling_params,
+        use_tqdm=lm.batch_size == "auto"
     )
     
-    # Calculate entropies per token position
-    token_entropies = []
-    for score in outputs.scores:
-        curr = []
-        for logits in score:
-            mask = logits != float("-inf")
-            filtered = logits[mask]
-            
-            entropy = -torch.sum(filtered.softmax(dim=-1) * filtered.log_softmax(dim=-1), dim=-1).item()
-            
-            if normalize:
-                max_entropy = math.log(mask.sum().item())
-                entropy = entropy / max_entropy if max_entropy > 0 else 0.0
-                
-            curr.append(entropy)
-        token_entropies.append(curr)
+    uncertainties = []
+    for out in outputs:
+        gen = out.outputs[0]
+        
+        logprobs = gen.logprobs
+        sample_uncertainties = []
+        
+        for i, item in enumerate(logprobs):            
+            logprob = item.logprob
+        
+            # Uncertainty = (1 - exp(logprob))
+            p = math.exp(min(logprob, 0))
+            sample_uncertainties.append(1.0 - p)
+        
+        uncertainties.append(sample_uncertainties)
     
-    # Transpose to get entropies per sequence
-    batch_size = outputs.sequences.shape[0]
-    sequence_entropies = []
-    
-    for i in range(batch_size):
-        seq_entropies = []
-        for token_pos in range(len(token_entropies)):
-            if i < len(token_entropies[token_pos]):
-                seq_entropies.append(token_entropies[token_pos][i])
-        sequence_entropies.append(seq_entropies)
-    
-    return outputs.sequences, sequence_entropies
+    return outputs, uncertainties

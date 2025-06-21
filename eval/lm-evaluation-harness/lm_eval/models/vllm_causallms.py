@@ -17,8 +17,8 @@ from lm_eval.utils import (
     make_disjoint_window,
 )
 
-# vLLM-compatible budget-forcing helper
-from lm_eval.budget_forcing.vllm_core import generate_with_budget_forcing_vllm
+
+from lm_eval.budget_forcing.core import generate_with_budget_forcing
 
 try:
     import ray
@@ -229,16 +229,13 @@ class VLLM(TemplateLM):
         if generate:
             # Detect and handle step-wise budget forcing (scale_func_name)
             if "scale_func_name" in kwargs:
-                scale_func_name = kwargs.pop("scale_func_name")
                 # Extract debug flag for budget forcing
-                debug = kwargs.pop("debug", False)
-                return generate_with_budget_forcing_vllm(
+                # debug = kwargs.pop("debug", False)
+                return generate_with_budget_forcing(
                     llm=self,
                     requests=requests,
                     max_tokens=max_tokens,
                     stop_sequences=stop,
-                    scale_func_name=scale_func_name,
-                    debug=debug,
                     **kwargs,
                 )
 

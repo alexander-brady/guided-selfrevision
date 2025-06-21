@@ -4,7 +4,6 @@ import random
 from typing import List, Dict, Any
 import torch
 
-from functools import wraps
 
 # Global metrics tracking for step-wise uncertainty
 _STEPWISE_METRICS = {
@@ -19,75 +18,6 @@ _STEPWISE_METRICS = {
     "error_details": [],     # Detailed error logs
 }
 
-
-def should_scale_only(func):
-    """
-    Decorator for scale functions that only return a boolean 
-    indicating whether to scale.
-    """
-    
-    @wraps(func)
-    def wrapper(*args, **kwargs):
-        scale_token = kwargs.pop('scale_token')
-        return func(*args, **kwargs), scale_token
-    
-    return wrapper
-
-
-def scale_token_only(func):
-    """
-    Decorator for scale functions that only return the scale token.
-    Returns true, thus indicating that scaling should occur.
-    """
-    @wraps(func)
-    def wrapper(*args, **kwargs):
-        return True, func(*args, **kwargs)
-    
-    return wrapper
-
-
-@should_scale_only
-def entropy_thresholding(
-    threshold: float,
-    decay_factor: float,
-    last_k: float,
-    iteration: int,
-    seq: List[int],
-    entropies: List[float],
-    hflm,
-) -> bool:
-    """
-    Determine whether to scale the sequence based on entropy and a threshold.
-    
-    Args:
-        threshold (float): The threshold for scaling.
-        decay_factor (float): Factor to decay the threshold over time. 
-        last_k (float): Number of last tokens to consider for scaling. If > 1, it considers the last k tokens; if < 1, it considers the last k percent of tokens. If -1, it considers all generated tokens.
-        iteration (int): The current thinking iteration.
-        seq (List[int]): The sequence of tokens.
-        entropies (List[float]): The entropy for each generated token of the sequence.
-        scale_token (List[int]): The token to use for scaling.
-        hflm (HFLM): The huggingface LM instance with the model and tokenizer.
-    
-    Returns:
-        bool: True if the model should continue reasoning.
-        List[int]: The scale token to continue reasoning with.
-    """ 
-    if 1 > last_k > 0:
-        last_k = math.ceil(last_k * len(seq))
-        
-    if last_k > -1:
-        entropies = entropies[-last_k:]
-        
-    avg_entropy = sum(entropies) / len(entropies) if entropies else 0.0
-    
-    print(f"Average Entropy: {avg_entropy}, {iteration=}")
-    print(f"Entropies: {entropies}")
-    print('-' * 20)
-    
-    return avg_entropy < (1 - (threshold * (decay_factor ** iteration)))
-
-
 def step_wise_uncertainty_driven(
     step_selection_strategy: str,
     max_steps: int,
@@ -95,7 +25,7 @@ def step_wise_uncertainty_driven(
     min_step_uncertainty: float,
     iteration: int,
     seq: torch.Tensor,
-    entropies: List[float],
+    uncertainties: List[float],
     hflm,
 ) -> tuple[bool, List[int]]:
     """
@@ -111,7 +41,7 @@ def step_wise_uncertainty_driven(
         min_step_uncertainty: Minimum uncertainty required to revisit a step (only used if use_min_uncertainty_filter=True)
         iteration: Current iteration
         seq: Generated token sequence (torch.Tensor)
-        entropies: Per-token entropies (List[float])
+        uncertainties: Per-token uncertainties (List[float])
         hflm: HuggingFace model instance
     
     Returns:
@@ -124,7 +54,7 @@ def step_wise_uncertainty_driven(
     
     # Early validation with graceful fallback
     try:
-        if not _validate_inputs(seq, entropies, hflm, call_id):
+        if not _validate_inputs(seq, uncertainties, hflm, call_id):
             return _record_fallback("input_validation_failed", hflm, call_id)
     except Exception as e:
         return _record_fallback("input_validation_exception", hflm, call_id, str(e))
@@ -157,11 +87,11 @@ def step_wise_uncertainty_driven(
             print(f"Iteration: {iteration}")
             print(f"Sequence length: {len(seq_tokens)} tokens")
             print(f"Text length: {len(text)} chars")
-            print(f"Entropies length: {len(entropies)} values")
+            print(f"uncertainties length: {len(uncertainties)} values")
             print(f"Parameters: strategy={step_selection_strategy}, max_steps={max_steps}")
             print(f"           use_min_filter={use_min_uncertainty_filter}, min_uncertainty={min_step_uncertainty}")
             print(f"Text preview (first 500 chars):\n{text[:500]}...")
-            print(f"Entropies (last 20): {entropies[-20:] if len(entropies) >= 20 else entropies}")
+            print(f"uncertainties (last 20): {uncertainties[-20:] if len(uncertainties) >= 20 else uncertainties}")
         
         # Parse numbered steps from the text
         try:
@@ -213,7 +143,7 @@ def step_wise_uncertainty_driven(
         
         # Calculate uncertainty for each step
         try:
-            step_uncertainties = calculate_step_uncertainties(steps, text, entropies, hflm, is_first_call)
+            step_uncertainties = calculate_step_uncertainties(steps, text, uncertainties, hflm, is_first_call)
             if step_uncertainties is None or len(step_uncertainties) != len(steps):
                 return _record_fallback("uncertainty_calculation_failed", hflm, call_id, 
                                        f"Expected {len(steps)} uncertainties, got {len(step_uncertainties) if step_uncertainties else 0}")
@@ -332,13 +262,13 @@ def step_wise_uncertainty_driven(
         return _record_fallback("critical_exception", hflm, call_id, str(e))
 
 
-def _validate_inputs(seq, entropies, hflm, call_id: int) -> bool:
+def _validate_inputs(seq, uncertainties, hflm, call_id: int) -> bool:
     """
     Validate inputs to the step-wise uncertainty function.
     
     Args:
         seq: Token sequence
-        entropies: Entropy values
+        uncertainties: Entropy values
         hflm: HuggingFace model instance
         call_id: Call identifier for logging
         
@@ -349,12 +279,12 @@ def _validate_inputs(seq, entropies, hflm, call_id: int) -> bool:
         _log_error(call_id, "validation", "Sequence is None")
         return False
     
-    if entropies is None:
-        _log_error(call_id, "validation", "Entropies is None")
+    if uncertainties is None:
+        _log_error(call_id, "validation", "uncertainties is None")
         return False
     
-    if not entropies:  # Empty list
-        _log_error(call_id, "validation", "Empty entropies list")
+    if not uncertainties:  # Empty list
+        _log_error(call_id, "validation", "Empty uncertainties list")
         return False
     
     if hflm is None:
@@ -487,14 +417,14 @@ def parse_numbered_steps(text: str) -> List[str]:
         return None
 
 
-def calculate_step_uncertainties(steps: List[str], full_text: str, entropies: List[float], hflm, is_first_call: bool = False) -> List[float]:
+def calculate_step_uncertainties(steps: List[str], full_text: str, uncertainties: List[float], hflm, is_first_call: bool = False) -> List[float]:
     """
     Calculate average uncertainty for each reasoning step with robust error handling.
     
     Args:
         steps: List of step content strings
         full_text: The complete generated text
-        entropies: Per-token entropy values
+        uncertainties: Per-token entropy values
         hflm: HuggingFace model instance
         is_first_call: Whether this is the first call (for detailed logging)
         
@@ -504,7 +434,7 @@ def calculate_step_uncertainties(steps: List[str], full_text: str, entropies: Li
     if is_first_call:
         print(f"\n🔬 DETAILED UNCERTAINTY CALCULATION:")
         print(f"   Steps to analyze: {len(steps)}")
-        print(f"   Entropy values available: {len(entropies)}")
+        print(f"   Entropy values available: {len(uncertainties)}")
         print(f"   Full text length: {len(full_text)} chars")
     
     # Input validation
@@ -512,30 +442,30 @@ def calculate_step_uncertainties(steps: List[str], full_text: str, entropies: Li
         print("⚠️  calculate_step_uncertainties: No steps provided")
         return None
     
-    if not entropies:
+    if not uncertainties:
         print("⚠️  WARNING: No entropy values available, using default uncertainty")
         return [0.5] * len(steps)
     
-    if not isinstance(entropies, list):
-        print(f"⚠️  WARNING: Entropies not a list (type: {type(entropies)}), converting...")
+    if not isinstance(uncertainties, list):
+        print(f"⚠️  WARNING: uncertainties not a list (type: {type(uncertainties)}), converting...")
         try:
-            entropies = list(entropies)
+            uncertainties = list(uncertainties)
         except Exception as e:
-            print(f"⚠️  ERROR: Failed to convert entropies to list: {e}")
+            print(f"⚠️  ERROR: Failed to convert uncertainties to list: {e}")
             return [0.5] * len(steps)
     
     # Validate entropy values
     try:
-        valid_entropies = []
-        for i, entropy in enumerate(entropies):
+        valid_uncertainties = []
+        for i, entropy in enumerate(uncertainties):
             if isinstance(entropy, (int, float)) and not math.isnan(entropy) and entropy >= 0:
-                valid_entropies.append(float(entropy))
+                valid_uncertainties.append(float(entropy))
             else:
                 print(f"⚠️  WARNING: Invalid entropy at position {i}: {entropy}")
-                valid_entropies.append(0.5)  # Default fallback
-        entropies = valid_entropies
+                valid_uncertainties.append(0.5)  # Default fallback
+        uncertainties = valid_uncertainties
     except Exception as e:
-        print(f"⚠️  ERROR: Failed to validate entropies: {e}")
+        print(f"⚠️  ERROR: Failed to validate uncertainties: {e}")
         return [0.5] * len(steps)
     
     step_uncertainties = []
@@ -554,16 +484,16 @@ def calculate_step_uncertainties(steps: List[str], full_text: str, entropies: Li
             print(f"⚠️  WARNING: Failed to tokenize full text: {e}")
             full_tokens = []
         
-        # Simple approach: divide entropies equally among steps
-        if len(entropies) >= len(steps):
-            entropies_per_step = len(entropies) // len(steps)
-            remainder = len(entropies) % len(steps)
+        # Simple approach: divide uncertainties equally among steps
+        if len(uncertainties) >= len(steps):
+            uncertainties_per_step = len(uncertainties) // len(steps)
+            remainder = len(uncertainties) % len(steps)
             
             for i, step in enumerate(steps):
-                start_idx = i * entropies_per_step
-                end_idx = start_idx + entropies_per_step
+                start_idx = i * uncertainties_per_step
+                end_idx = start_idx + uncertainties_per_step
                 
-                # Distribute remainder entropies to first few steps
+                # Distribute remainder uncertainties to first few steps
                 if i < remainder:
                     end_idx += 1
                     start_idx += i
@@ -571,32 +501,32 @@ def calculate_step_uncertainties(steps: List[str], full_text: str, entropies: Li
                     start_idx += remainder
                     end_idx += remainder
                 
-                if i == len(steps) - 1:  # Last step gets any remaining entropies
-                    end_idx = len(entropies)
+                if i == len(steps) - 1:  # Last step gets any remaining uncertainties
+                    end_idx = len(uncertainties)
                 
-                step_entropies = entropies[start_idx:end_idx]
-                if step_entropies:
+                step_uncertainties = uncertainties[start_idx:end_idx]
+                if step_uncertainties:
                     try:
-                        avg_uncertainty = sum(step_entropies) / len(step_entropies)
+                        avg_uncertainty = sum(step_uncertainties) / len(step_uncertainties)
                         # Clamp to reasonable range
                         avg_uncertainty = max(0.0, min(1.0, avg_uncertainty))
                     except Exception as e:
                         print(f"⚠️  WARNING: Failed to calculate average for step {i+1}: {e}")
                         avg_uncertainty = 0.5
                 else:
-                    avg_uncertainty = sum(entropies) / len(entropies)  # Fallback
+                    avg_uncertainty = sum(uncertainties) / len(uncertainties)  # Fallback
                 
                 step_uncertainties.append(avg_uncertainty)
                 
                 if is_first_call:
                     print(f"   Step {i+1}: tokens ~{start_idx}-{end_idx}, "
-                          f"entropies: {len(step_entropies)}, "
+                          f"uncertainties: {len(step_uncertainties)}, "
                           f"avg_uncertainty: {avg_uncertainty:.4f}")
         else:
-            # Not enough entropies - use available ones
-            print(f"⚠️  WARNING: Only {len(entropies)} entropies for {len(steps)} steps")
+            # Not enough uncertainties - use available ones
+            print(f"⚠️  WARNING: Only {len(uncertainties)} uncertainties for {len(steps)} steps")
             try:
-                avg_entropy = sum(entropies) / len(entropies)
+                avg_entropy = sum(uncertainties) / len(uncertainties)
                 step_uncertainties = [avg_entropy] * len(steps)
             except Exception as e:
                 print(f"⚠️  ERROR: Failed to calculate average entropy: {e}")
@@ -613,7 +543,7 @@ def calculate_step_uncertainties(steps: List[str], full_text: str, entropies: Li
         print(f"⚠️  ERROR in calculate_step_uncertainties: {e}")
         # Fallback: return average entropy for all steps
         try:
-            avg_entropy = sum(entropies) / len(entropies) if entropies else 0.5
+            avg_entropy = sum(uncertainties) / len(uncertainties) if uncertainties else 0.5
             return [avg_entropy] * len(steps)
         except Exception as fallback_e:
             print(f"⚠️  CRITICAL: Even fallback calculation failed: {fallback_e}")
@@ -684,29 +614,3 @@ def print_stepwise_metrics():
                 print(f"   {key}: {value}")
     
     print("="*80)
-
-
-def uncertainty_driven_pondering(
-    min_seq_length: int,
-    threshold: int,
-    iteration: int,
-    seq: List[int],
-    entropies: List[float],
-    hflm,     
-):
-    """
-    Targeted reevaluation of low-certainty statements.
-    
-    Args:
-        seq (List[int]): The sequence of tokens.
-        entropies (List[float]): The entropy for each generated token of the sequence.
-        scale_token (List[int]): The token to reevaluation_statementuse for scaling.
-        hflm (HFLM): The huggingface LM instance with the model and tokenizer.
-    
-    Returns:
-        bool: True if the model should continue reasoning.
-        List[int]: The scale token to continue reasoning with.
-    """ 
-    pass
-    # tokens_to_reevaluate = []
-    # hflm.tokens_to_str

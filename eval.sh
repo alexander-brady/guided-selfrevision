@@ -1,5 +1,4 @@
 #!/bin/bash
-#!/bin/bash
 #SBATCH --job-name=s1_eval_job
 #SBATCH --output=logs/s1_eval_%j.out
 #SBATCH --error=logs/s1_eval_%j.err
@@ -10,6 +9,11 @@
 #SBATCH --gres=gpumem:64g
 #SBATCH --time=24:00:00
 #SBATCH --mail-type=END,FAIL
+
+MODEL="s1.1-1.5B"
+MAX_BUDGET_FORCING_STEPS=6
+WAIT_TOKEN="Wait"
+SCALE_FUNCTION="entropy_thresholding"
 
 module load stack/2024-06 gcc/12.2.0 python/3.11.6 cuda/11.3.1 eth_proxy
 
@@ -48,14 +52,16 @@ fi
 echo "Starting s1.1-1.5B model evaluation at $(date)"
 
 OPENAI_API_KEY=$OPENAI_API_KEY PROCESSOR=$PROCESSOR lm_eval \
-    --model hf \
+    --model vllm \
     --model_args "pretrained=simplescaling/s1.1-1.5B,dtype=float16,max_length=32768" \
     --tasks openai_math \
     --batch_size auto \
     --apply_chat_template \
     --output_path s1_1_1_5B_eval/$USER/$SLURM_JOB_ID \
     --log_samples \
-    --gen_kwargs "max_gen_toks=32768,max_tokens_thinking=auto,thinking_n_ignore=6,thinking_n_ignore_str=Wait,scale_func_name=entropy_thresholding" 
+    --gen_kwargs "max_gen_toks=32768,max_tokens_thinking=auto,thinking_n_ignore=$MAX_BUDGET_FORCING_STEPS,thinking_n_ignore_str=$WAIT_TOKEN,scale_func_name=$SCALE_FUNCTION" \
+    --limit 10
+
 
 echo "Job completed at $(date)"
 

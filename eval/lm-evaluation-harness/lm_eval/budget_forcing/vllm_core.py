@@ -281,7 +281,7 @@ def generate_with_budget_forcing_vllm(
             keep_scaling, scale_token = scale_func(
                 iteration=iteration,
                 seq=full_sequence,
-                entropies=uncerts,
+                uncertainties=uncerts,
                 hflm=llm,  # this arg name kept for compatibility
             )
 
