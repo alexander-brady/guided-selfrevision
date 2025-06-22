@@ -17,6 +17,24 @@ metric_list:
   - metric: exact_match
     aggregation: mean
     higher_is_better: true
+  - metric: stepwise_total_calls
+    aggregation: bypass
+    higher_is_better: true
+  - metric: stepwise_success_rate
+    aggregation: bypass
+    higher_is_better: true
+  - metric: stepwise_parsing_failures
+    aggregation: bypass
+    higher_is_better: true
+  - metric: stepwise_steps_found_total
+    aggregation: bypass
+    higher_is_better: true
+  - metric: stepwise_steps_revised_total
+    aggregation: bypass
+    higher_is_better: true
+  - metric: stepwise_avg_steps_per_call
+    aggregation: bypass
+    higher_is_better: true
 repeats: 64
 filter_list:
   - name: "cov@64" # get coverage@64 , via allowing all 64 samples and then picking only the correct one in the evaluator.

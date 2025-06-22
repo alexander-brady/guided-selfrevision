@@ -257,6 +257,10 @@ def stop_sequences_criteria(
     initial_decoder_input_length: int,
     batch_size: int,
 ) -> transformers.StoppingCriteriaList:
+    # print(type(stop_sequences))
+    # for sequence in stop_sequences:
+    #     print(type(sequence), sequence)
+    # print('Done', flush=True)
     return transformers.StoppingCriteriaList(
         [
             *[

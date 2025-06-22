@@ -17,6 +17,8 @@ from lm_eval.utils import (
     make_disjoint_window,
 )
 
+from budget_forcing.core import generate_with_budget_forcing
+
 
 try:
     import ray
@@ -225,6 +227,19 @@ class VLLM(TemplateLM):
         **kwargs,
     ):
         if generate:
+            # Detect and handle step-wise budget forcing (scale_func_name)
+            if "scale_func_name" in kwargs:
+                # Extract debug flag for budget forcing
+                # debug = kwargs.pop("debug", False)
+                return generate_with_budget_forcing(
+                    lm=self,
+                    requests=requests,
+                    max_tokens=max_tokens,
+                    stop_sequences=stop,
+                    **kwargs,
+                )
+
+            # Otherwise proceed with normal generation path
             kwargs = self.modify_gen_kwargs(kwargs)
 
             rejection_sample = kwargs.pop("rejection_sample", None)
@@ -741,4 +756,40 @@ class VLLM(TemplateLM):
         kwargs["spaces_between_special_tokens"] = kwargs.get(
             "spaces_between_special_tokens", False
         )
+        # ------------------------------------------------------------------
+        # Strip out custom generation parameters used by the HF backend but
+        # not yet supported in the vLLM backend. Passing these through to
+        # vLLM's SamplingParams would raise a TypeError for unexpected
+        # keyword arguments. We silently drop them here so that existing
+        # evaluation scripts (which often append these parameters) can run
+        # unchanged with the vLLM engine. You can still access these values
+        # via the original kwargs dict before calling this helper if you plan
+        # to implement custom logic.
+        # ------------------------------------------------------------------
+        unsupported_keys = [
+            "scale_func_name",
+            "step_selection_strategy",
+            "max_steps",
+            "use_min_uncertainty_filter",
+            "min_step_uncertainty",
+            "threshold",
+            "decay_factor",
+            "last_k",
+            # HF-specific parameters that don't exist in vLLM
+            "do_sample",  # Already handled above
+            "max_tokens_thinking",  # Handled in thinking logic, not SamplingParams
+            "thinking_n_ignore",    # Handled in thinking logic, not SamplingParams
+            "thinking_start",       # Handled in thinking logic, not SamplingParams
+            "thinking_end",         # Handled in thinking logic, not SamplingParams
+            "until_thinking",       # Handled in thinking logic, not SamplingParams
+            "until_thinking_2",     # Handled in thinking logic, not SamplingParams
+            "thinking_n_ignore_str", # Handled in thinking logic, not SamplingParams
+            "rejection_sample",     # Handled in thinking logic, not SamplingParams
+            "min_tokens_thinking",  # Handled in thinking logic, not SamplingParams
+        ]
+
+        for k in unsupported_keys:
+            if k in kwargs:
+                kwargs.pop(k)
+
         return kwargs

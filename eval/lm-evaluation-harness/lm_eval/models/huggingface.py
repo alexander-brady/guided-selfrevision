@@ -35,6 +35,7 @@ from lm_eval.models.utils import (
     pad_and_concat,
     stop_sequences_criteria,
 )
+from budget_forcing import generate_with_budget_forcing
 
 if int(os.getenv("O1INFERENCE", 0)):
     import sys
@@ -701,7 +702,7 @@ class HFLM(TemplateLM):
                 revision=revision,
                 trust_remote_code=trust_remote_code,
                 use_fast=use_fast_tokenizer,
-            )
+            )            
         return None
 
     def _detect_batch_size(self, requests=None, pos: int = 0):
@@ -809,13 +810,14 @@ class HFLM(TemplateLM):
             return_tensors="pt",
             **add_special_tokens,
         )
+
         if left_truncate_len:
             encoding["input_ids"] = encoding["input_ids"][:, -left_truncate_len:]
             encoding["attention_mask"] = encoding["attention_mask"][
                 :, -left_truncate_len:
             ]
         self.tokenizer.padding_side = old_padding_side
-
+        
         return encoding["input_ids"], encoding["attention_mask"]
 
     def tok_decode(self, tokens, skip_special_tokens=True):
@@ -847,36 +849,66 @@ class HFLM(TemplateLM):
                 assert self.AUTO_MODEL_CLASS == transformers.AutoModelForCausalLM
                 return self.model(inps).logits
 
-    def _model_generate(self, context, max_length, stop, **generation_kwargs):
-        # temperature = 0.0 if not set
-        # if do_sample is false and temp==0.0:
-        # remove temperature, as do_sample=False takes care of this
-        # and we don't want a warning from HF
-        generation_kwargs["temperature"] = generation_kwargs.get("temperature", 0.0)
-        do_sample = generation_kwargs.get("do_sample", None)
-
-        # The temperature has to be a strictly positive float -- if it is 0.0, use greedy decoding strategies
-        if generation_kwargs.get("temperature") == 0.0 and do_sample is None:
-            generation_kwargs["do_sample"] = do_sample = False
-
-        if do_sample is False and generation_kwargs.get("temperature") == 0.0:
-            generation_kwargs.pop("temperature")
+    def _model_generate(
+        self, 
+        context: torch.Tensor, 
+        max_length: int, 
+        stop_sequences: Optional[List[str]] = None,
+        scale_func_name: Optional[str] = None,
+        **generation_kwargs
+    ):
+        """
+        Internal method to generate text using the model.
+        
+        Args:
+            context (torch.Tensor): Input tensor of shape [batch, sequence_length].
+            max_length (int): Maximum length of the generated sequence.
+            stop_sequences (Optional[List[str]]): List of sequences to stop generation. Not used if O1Inference is set.
+            scale_func_name (Optional[str]): Function to use for generation, e.g. `entropy_thresholding`.
+            **generation_kwargs: Additional keyword arguments for generation.
+        Returns:
+            torch.Tensor: Generated sequences of shape [batch, sequence_length].
+        """
+        temperature = generation_kwargs.get("temperature", 0.0)
+        # Default `do_sample` to `False` (greedy decoding) if `temperature` is 0.0
+        do_sample = generation_kwargs.setdefault(
+            "do_sample", temperature > 0.0
+        )
+        # Remove `temperature` if not sampling to avoid HF warnings
+        if not do_sample:
+            generation_kwargs.pop("temperature", None)
 
         if int(os.getenv("O1INFERENCE", 0)):
             print("O1INFERENCE is set")
-            stopping_criteria = None
+            stopping_criteria = stop_sequences = None
         else:
             stopping_criteria = stop_sequences_criteria(
-                self.tokenizer, stop, context.shape[1], context.shape[0]
+                self.tokenizer, 
+                stop_sequences, 
+                context.shape[1], 
+                context.shape[0]
             )
-        return self.model.generate(
-            input_ids=context,
-            max_length=max_length,
-            stopping_criteria=stopping_criteria,
-            pad_token_id=self.tokenizer.pad_token_id,
-            use_cache=True,
-            **generation_kwargs,
-        )
+        
+        if scale_func_name:
+            return generate_with_budget_forcing(
+                self,
+                input_ids=context,
+                max_length=max_length,
+                stop_sequences=stop_sequences,
+                pad_token_id=self.tokenizer.pad_token_id,
+                scale_func_name=scale_func_name,
+                **generation_kwargs,
+            )
+        
+        else:
+            return self.model.generate(
+                input_ids=context,
+                max_length=max_length,
+                stopping_criteria=stopping_criteria,
+                pad_token_id=self.tokenizer.pad_token_id,
+                use_cache=True,
+                **generation_kwargs,
+            )
 
     def _select_cont_toks(
         self, logits: torch.Tensor, contlen: int = None, inplen: int = None
@@ -1292,8 +1324,8 @@ class HFLM(TemplateLM):
             elif self.AUTO_MODEL_CLASS == transformers.AutoModelForSeq2SeqLM:
                 # max len for inputs = encoder's whole max_length
                 max_ctx_len = self.max_length
-
-            # encode, pad, and truncate contexts for this batch
+                
+            # encode, pad, and truncate contexts for this batch            
             context_enc, attn_masks = self.tok_batch_encode(
                 contexts,
                 left_truncate_len=max_ctx_len,
@@ -1309,7 +1341,7 @@ class HFLM(TemplateLM):
             cont = self._model_generate(
                 context=context_enc,
                 attention_mask=attn_masks,
-                stop=until,
+                stop_sequences=until,
                 **kwargs,
             )
 
