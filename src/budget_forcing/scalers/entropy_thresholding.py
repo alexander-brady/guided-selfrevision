@@ -39,8 +39,8 @@ def entropy_thresholding(
     if last_k > -1:
         uncertainties = uncertainties[-last_k:]
         
-    avg_entropy = sum(uncertainties) / len(uncertainties) if uncertainties else 0.0
+    avg_uncertainty = sum(uncertainties) / len(uncertainties) if uncertainties else 0.0
     
-    print(f"Average Uncertainty: {avg_entropy}, {iteration=}")
+    print(f"Average Uncertainty: {avg_uncertainty}, {iteration=}")
     
-    return avg_entropy < (1 - (threshold * (decay_factor ** iteration)))
+    return avg_uncertainty < threshold * (decay_factor ** iteration)

@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=s1_eval_job
-#SBATCH --output=logs/unc_eval_%j.out
-#SBATCH --error=logs/unc_eval_%j.err
+#SBATCH --output=logs/unc_32B_eval_%j.out
+#SBATCH --error=logs/unc_32B_eval_%j.err
 #SBATCH --ntasks=1
 #SBATCH --mem-per-cpu=16G
 #SBATCH --nodes=1
@@ -10,14 +10,15 @@
 #SBATCH --time=24:00:00
 #SBATCH --mail-type=END,FAIL
 
-MODEL="s1.1-1.5B" # From simplescaling repo
-MAX_BUDGET_FORCING_STEPS=6
+# MODEL="s1.1-1.5B" # From simplescaling repo
+MODEL="s1.1-32B"
+MAX_BUDGET_FORCING_STEPS=4
 WAIT_TOKEN="Wait"
 
 # SCALE_FUNCTION="default"
 # SCALE_FUNCTION="entropy_thresholding"
 SCALE_FUNCTION="uncertainty_driven_reevaluation"
-OUTPUT_PATH="../../results/$USER/${SLURM_JOB_ID}_${SCALE_FUNCTION}_${MAX_BUDGET_FORCING_STEPS}"
+OUTPUT_PATH="../../results/$USER/${SCALE_FUNCTION}_${MAX_BUDGET_FORCING_STEPS}_${SLURM_JOB_ID}"
 
 module load stack/2024-06 gcc/12.2.0 python/3.11.6 cuda/11.3.1 eth_proxy
 
@@ -59,7 +60,7 @@ echo "Starting $MODEL model evaluation at $(date)"
 echo "Using scale function: $SCALE_FUNCTION"
 echo "Wait token: $WAIT_TOKEN, with max budget forcing steps: $MAX_BUDGET_FORCING_STEPS"
 
-OPENAI_API_KEY=$OPENAI_API_KEY PROCESSOR=$PROCESSOR lm_eval \
+OPENAI_API_KEY=$OPENAI_API_KEY PROCESSOR="gpt-4o-mini" lm_eval \
     --model vllm \
     --model_args "pretrained=simplescaling/$MODEL,dtype=float16,max_length=32768" \
     --tasks openai_math \

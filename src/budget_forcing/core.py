@@ -129,6 +129,7 @@ def generate_with_budget_forcing(
         **gen_kwargs
     )
     
+    
     return lm.model.generate(
         prompt_token_ids=context,
         sampling_params=sampling_params,

@@ -14,7 +14,6 @@ def uncertainty_driven_reevaluation(
     uncertainties: List[float],
     lm: 'VLLM',
     min_threshold: float = -1.0,
-    
 ) -> List[int]:
     """
     Prompts model to continue reasoning on uncertain sequences.
@@ -37,8 +36,17 @@ def uncertainty_driven_reevaluation(
 
     uncertain_utterance, max_uncertainty = max(segments, key=lambda x: x[1])
     
+    ### ABLATIONS ###
+    # Randomly select a segment to continue reasoning on.
+    # uncertain_utterance, max_uncertainty = segments[np.random.randint(len(segments))
+    # Always take the last segment for reevaluation.
+    # uncertain_utterance, max_uncertainty = segments[-1]
+    # Ablation: Use the third most uncertain segment.
+    # sorted_segments = sorted(segments, key=lambda x: x[1], reverse=True)
+    # uncertain_utterance, max_uncertainty = sorted_segments[2] if len(sorted_segments) > 2 else sorted_segments[0]
+    
     if max_uncertainty < min_threshold:
-        return [] # Stop scaling if the maximum uncertainty is below the threshold.
+        return [] # Stop scaling if the model is confident enough.
     
     uncertain_utterance = ' '.join(uncertain_utterance.split()[:6]).strip() # Limit to first 6 words for brevity.
     continuation_prompt = f"Wait, I am not sure that '{uncertain_utterance}...' is correct. Let me reevaluate my answer."

@@ -60,7 +60,7 @@ echo "Starting $MODEL model evaluation at $(date)"
 echo "Using scale function: $SCALE_FUNCTION"
 echo "Wait token: $WAIT_TOKEN, with max budget forcing steps: $MAX_BUDGET_FORCING_STEPS"
 
-OPENAI_API_KEY=$OPENAI_API_KEY PROCESSOR=$PROCESSOR lm_eval \
+OPENAI_API_KEY=$OPENAI_API_KEY PROCESSOR="gpt-4o-mini" lm_eval \
     --model vllm \
     --model_args "pretrained=simplescaling/$MODEL,dtype=float16,max_length=32768" \
     --tasks openai_math \
