@@ -1,8 +1,12 @@
 import math
 import re
 import random
-from typing import List, Dict, Any
+from typing import List, Dict, Any, TYPE_CHECKING
+
 import torch
+
+if TYPE_CHECKING:
+    from lm_eval.models.vllm_causallms import VLLM
 
 
 # Global metrics tracking for step-wise uncertainty
@@ -24,9 +28,9 @@ def step_wise_uncertainty_driven(
     use_min_uncertainty_filter: bool,
     min_step_uncertainty: float,
     iteration: int,
-    seq: torch.Tensor,
+    tokens: torch.Tensor,
     uncertainties: List[float],
-    hflm,
+    lm: 'VLLM',
 ) -> tuple[bool, List[int]]:
     """
     Generate numbered reasoning steps and continue with the step that has highest uncertainty.
@@ -40,9 +44,9 @@ def step_wise_uncertainty_driven(
         use_min_uncertainty_filter: Whether to apply minimum uncertainty filtering
         min_step_uncertainty: Minimum uncertainty required to revisit a step (only used if use_min_uncertainty_filter=True)
         iteration: Current iteration
-        seq: Generated token sequence (torch.Tensor)
+        tokens: Generated token sequence (torch.Tensor)
         uncertainties: Per-token uncertainties (List[float])
-        hflm: HuggingFace model instance
+        lm: HuggingFace model instance
     
     Returns:
         tuple: (continue_reasoning: bool, continuation_tokens: List[int])
@@ -54,27 +58,27 @@ def step_wise_uncertainty_driven(
     
     # Early validation with graceful fallback
     try:
-        if not _validate_inputs(seq, uncertainties, hflm, call_id):
-            return _record_fallback("input_validation_failed", hflm, call_id)
+        if not _validate_inputs(tokens, uncertainties, lm, call_id):
+            return _record_fallback("input_validation_failed", lm, call_id)
     except Exception as e:
-        return _record_fallback("input_validation_exception", hflm, call_id, str(e))
+        return _record_fallback("input_validation_exception", lm, call_id, str(e))
     
     try:
         # Convert tensor to token list if needed
-        if isinstance(seq, torch.Tensor):
-            seq_tokens = seq.tolist()
-        elif isinstance(seq, list):
-            seq_tokens = seq
+        if isinstance(tokens, torch.Tensor):
+            seq_tokens = tokens.tolist()
+        elif isinstance(tokens, list):
+            seq_tokens = tokens
         else:
-            return _record_fallback("unsupported_sequence_type", hflm, call_id, f"Type: {type(seq)}")
+            return _record_fallback("unsupported_sequence_type", lm, call_id, f"Type: {type(tokens)}")
         
         # Convert tokens to text for parsing
         try:
-            text = hflm.tokenizer.decode(seq_tokens, skip_special_tokens=False)
+            text = lm.tokenizer.decode(seq_tokens, skip_special_tokens=False)
             if not text or len(text.strip()) == 0:
-                return _record_fallback("empty_decoded_text", hflm, call_id)
+                return _record_fallback("empty_decoded_text", lm, call_id)
         except Exception as e:
-            return _record_fallback("tokenizer_decode_failed", hflm, call_id, str(e))
+            return _record_fallback("tokenizer_decode_failed", lm, call_id, str(e))
         
         # First call detailed logging
         is_first_call = _STEPWISE_METRICS["first_call_details"] is None
@@ -97,7 +101,7 @@ def step_wise_uncertainty_driven(
         try:
             steps = parse_numbered_steps(text)
             if steps is None:  # parse_numbered_steps returns None on error
-                return _record_fallback("step_parsing_returned_none", hflm, call_id)
+                return _record_fallback("step_parsing_returned_none", lm, call_id)
             
             _STEPWISE_METRICS["steps_found_total"] += len(steps)
             
@@ -108,7 +112,7 @@ def step_wise_uncertainty_driven(
                     print(f"  Step {i+1}: {step_preview}")
             
         except Exception as e:
-            return _record_fallback("step_parsing_exception", hflm, call_id, str(e))
+            return _record_fallback("step_parsing_exception", lm, call_id, str(e))
         
         # Check if we've reached max steps
         if len(steps) >= max_steps:
@@ -136,16 +140,16 @@ def step_wise_uncertainty_driven(
             
             try:
                 continuation_prompt = "\n\nLet me think about this more carefully and break it down into numbered steps:\n\nStep 1:"
-                continuation_tokens = hflm.tok_encode(continuation_prompt)
+                continuation_tokens = lm.tok_encode(continuation_prompt)
                 return True, continuation_tokens
             except Exception as e:
-                return _record_fallback("no_steps_continuation_failed", hflm, call_id, str(e))
+                return _record_fallback("no_steps_continuation_failed", lm, call_id, str(e))
         
         # Calculate uncertainty for each step
         try:
-            step_uncertainties = calculate_step_uncertainties(steps, text, uncertainties, hflm, is_first_call)
+            step_uncertainties = calculate_step_uncertainties(steps, text, uncertainties, lm, is_first_call)
             if step_uncertainties is None or len(step_uncertainties) != len(steps):
-                return _record_fallback("uncertainty_calculation_failed", hflm, call_id, 
+                return _record_fallback("uncertainty_calculation_failed", lm, call_id, 
                                        f"Expected {len(steps)} uncertainties, got {len(step_uncertainties) if step_uncertainties else 0}")
             
             _STEPWISE_METRICS["successful_extractions"] += 1
@@ -156,7 +160,7 @@ def step_wise_uncertainty_driven(
                 print(f"  Step {i+1}: uncertainty={uncertainty:.4f} | {step_preview}")
             
         except Exception as e:
-            return _record_fallback("uncertainty_calculation_exception", hflm, call_id, str(e))
+            return _record_fallback("uncertainty_calculation_exception", lm, call_id, str(e))
         
         # Filter steps by minimum uncertainty if enabled
         try:
@@ -176,7 +180,7 @@ def step_wise_uncertainty_driven(
             print(f"   Eligible steps: {len(eligible_steps)}/{len(steps)}")
                 
         except Exception as e:
-            return _record_fallback("uncertainty_filtering_failed", hflm, call_id, str(e))
+            return _record_fallback("uncertainty_filtering_failed", lm, call_id, str(e))
         
         if not eligible_steps:
             if use_min_uncertainty_filter:
@@ -194,7 +198,7 @@ def step_wise_uncertainty_driven(
                 return False, []
             else:
                 # This shouldn't happen if use_min_uncertainty_filter is False
-                return _record_fallback("no_eligible_steps_unexpected", hflm, call_id)
+                return _record_fallback("no_eligible_steps_unexpected", lm, call_id)
         
         # Select step based on strategy
         try:
@@ -208,7 +212,7 @@ def step_wise_uncertainty_driven(
                 print(f"⚠️  Unknown strategy: {step_selection_strategy}, using highest_uncertainty")
                 selected_idx = max(eligible_steps, key=lambda x: x[1])[0]
         except Exception as e:
-            return _record_fallback("step_selection_failed", hflm, call_id, str(e))
+            return _record_fallback("step_selection_failed", lm, call_id, str(e))
         
         selected_uncertainty = step_uncertainties[selected_idx]
         step_num = selected_idx + 1
@@ -226,11 +230,11 @@ def step_wise_uncertainty_driven(
         # Generate continuation prompt
         try:
             continuation_prompt = f"\n\nLet me revisit Step {step_num} in more detail and make sure I got it right:\n\nStep {step_num} (revisited):"
-            continuation_tokens = hflm.tok_encode(continuation_prompt)
+            continuation_tokens = lm.tok_encode(continuation_prompt)
             if not continuation_tokens:
-                return _record_fallback("empty_continuation_tokens", hflm, call_id)
+                return _record_fallback("empty_continuation_tokens", lm, call_id)
         except Exception as e:
-            return _record_fallback("continuation_encoding_failed", hflm, call_id, str(e))
+            return _record_fallback("continuation_encoding_failed", lm, call_id, str(e))
         
         if is_first_call:
             _STEPWISE_METRICS["first_call_details"] = {
@@ -259,23 +263,23 @@ def step_wise_uncertainty_driven(
         return True, continuation_tokens
         
     except Exception as e:
-        return _record_fallback("critical_exception", hflm, call_id, str(e))
+        return _record_fallback("critical_exception", lm, call_id, str(e))
 
 
-def _validate_inputs(seq, uncertainties, hflm, call_id: int) -> bool:
+def _validate_inputs(tokens, uncertainties, lm, call_id: int) -> bool:
     """
     Validate inputs to the step-wise uncertainty function.
     
     Args:
-        seq: Token sequence
+        tokens: Token sequence
         uncertainties: Entropy values
-        hflm: HuggingFace model instance
+        lm: HuggingFace model instance
         call_id: Call identifier for logging
         
     Returns:
         bool: True if inputs are valid, False otherwise
     """
-    if seq is None:
+    if tokens is None:
         _log_error(call_id, "validation", "Sequence is None")
         return False
     
@@ -287,28 +291,28 @@ def _validate_inputs(seq, uncertainties, hflm, call_id: int) -> bool:
         _log_error(call_id, "validation", "Empty uncertainties list")
         return False
     
-    if hflm is None:
+    if lm is None:
         _log_error(call_id, "validation", "HFLM instance is None")
         return False
     
-    if not hasattr(hflm, 'tokenizer'):
+    if not hasattr(lm, 'tokenizer'):
         _log_error(call_id, "validation", "HFLM missing tokenizer attribute")
         return False
     
-    if not hasattr(hflm, 'tok_encode'):
+    if not hasattr(lm, 'tok_encode'):
         _log_error(call_id, "validation", "HFLM missing tok_encode method")
         return False
     
     return True
 
 
-def _record_fallback(reason: str, hflm, call_id: int, details: str = "") -> tuple[bool, List[int]]:
+def _record_fallback(reason: str, lm, call_id: int, details: str = "") -> tuple[bool, List[int]]:
     """
     Record a fallback event and return the fallback continuation.
     
     Args:
         reason: Reason for fallback
-        hflm: HuggingFace model instance
+        lm: HuggingFace model instance
         call_id: Call identifier
         details: Additional error details
         
@@ -342,7 +346,7 @@ def _record_fallback(reason: str, hflm, call_id: int, details: str = "") -> tupl
     try:
         # Default fallback continuation that mimics original behavior
         fallback_prompt = "\n\nWait, let me think about this more carefully:"
-        continuation_tokens = hflm.tok_encode(fallback_prompt)
+        continuation_tokens = lm.tok_encode(fallback_prompt)
         print(f"   ✅ Fallback successful: {fallback_prompt}")
         return True, continuation_tokens
     except Exception as e:
@@ -417,7 +421,7 @@ def parse_numbered_steps(text: str) -> List[str]:
         return None
 
 
-def calculate_step_uncertainties(steps: List[str], full_text: str, uncertainties: List[float], hflm, is_first_call: bool = False) -> List[float]:
+def calculate_step_uncertainties(steps: List[str], full_text: str, uncertainties: List[float], lm, is_first_call: bool = False) -> List[float]:
     """
     Calculate average uncertainty for each reasoning step with robust error handling.
     
@@ -425,7 +429,7 @@ def calculate_step_uncertainties(steps: List[str], full_text: str, uncertainties
         steps: List of step content strings
         full_text: The complete generated text
         uncertainties: Per-token entropy values
-        hflm: HuggingFace model instance
+        lm: HuggingFace model instance
         is_first_call: Whether this is the first call (for detailed logging)
         
     Returns:
@@ -473,8 +477,8 @@ def calculate_step_uncertainties(steps: List[str], full_text: str, uncertainties
     try:
         # More robust approach: encode the full text and map positions
         try:
-            if hasattr(hflm, 'tok_encode'):
-                full_tokens = hflm.tok_encode(full_text)
+            if hasattr(lm, 'tok_encode'):
+                full_tokens = lm.tok_encode(full_text)
                 if is_first_call:
                     print(f"   Full text tokenized to: {len(full_tokens)} tokens")
             else:

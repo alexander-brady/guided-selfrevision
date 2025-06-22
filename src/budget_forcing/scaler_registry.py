@@ -1,8 +1,7 @@
 from functools import partial
 from typing import Callable, List
 
-
-import lm_eval.budget_forcing.scalers as scalers
+import budget_forcing.scalers as scalers
 
 
 def get_scale_func(func_name: str, scale_token: List[int], **kwargs) -> Callable:
@@ -39,7 +38,7 @@ def get_scale_func(func_name: str, scale_token: List[int], **kwargs) -> Callable
             return partial(
                 scalers.uncertainty_driven_reevaluation,
                 scale_token=scale_token,
-                **kwargs
+                min_threshold=kwargs.pop("min_threshold", -1.0)
             )
         case "step_wise_uncertainty_driven":
             step_selection_strategy = str(kwargs.pop("step_selection_strategy", "highest_uncertainty"))

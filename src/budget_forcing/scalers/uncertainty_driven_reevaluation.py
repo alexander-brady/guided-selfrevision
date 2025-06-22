@@ -1,17 +1,20 @@
-from typing import List, Tuple, Callable
 import numpy as np
+from typing import List, Tuple, Callable, TYPE_CHECKING
+from budget_forcing.scalers.util import scale_token_only
 
-from lm_eval.budget_forcing.scalers.util import scale_token_only
-
-
+if TYPE_CHECKING:
+    from lm_eval.models.vllm_causallms import VLLM
+    
+    
 @scale_token_only
 def uncertainty_driven_reevaluation(
     scale_token: List[int],
     iteration: int,
     tokens: List[int],
     uncertainties: List[float],
-    hflm,
+    lm: 'VLLM',
     min_threshold: float = -1.0,
+    
 ) -> List[int]:
     """
     Prompts model to continue reasoning on uncertain sequences.
@@ -21,13 +24,13 @@ def uncertainty_driven_reevaluation(
         iteration (int): The current thinking iteration.
         tokens (List[int]): The sequence of tokens, i.e. context and generated tokens.
         uncertainties (List[float]): The uncertainty for each generated token of the sequence (higher is more certain).
-        hflm (HFLM): The huggingface LM instance with the model and tokenizer.
+        lm (VLLM): The LM instance with the model and tokenizer.
         min_threshold (float): The minimum uncertainty threshold to consider a segment for reevaluation.
     Returns:
         List[int]: The scale token to continue reasoning with.
     """
-    generated_tokens = tokens[len(uncertainties):]
-    segments = _split_uncertainties(uncertainties, generated_tokens, hflm.tokenizer)
+    generated_tokens = tokens[-len(uncertainties):]
+    segments = _split_uncertainties(uncertainties, generated_tokens, lm.tokenizer)
     
     if not segments:
         return scale_token # No segments found, return the scale token as is.
@@ -38,8 +41,8 @@ def uncertainty_driven_reevaluation(
         return [] # Stop scaling if the maximum uncertainty is below the threshold.
     
     uncertain_utterance = ' '.join(uncertain_utterance.split()[:6]).strip() # Limit to first 6 words for brevity.
-    continuation_prompt = f"Wait, I am not sure that what I said is correct, namely '{uncertain_utterance}...'. Let me reevaluate my answer."
-    continuation_tokens = hflm.tokenizer.encode(continuation_prompt, add_special_tokens=False)
+    continuation_prompt = f"Wait, I am not sure that '{uncertain_utterance}...' is correct. Let me reevaluate my answer."
+    continuation_tokens = lm.tokenizer.encode(continuation_prompt, add_special_tokens=False)
     
     return continuation_tokens
 

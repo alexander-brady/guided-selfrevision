@@ -477,36 +477,36 @@ def cli_evaluate(args: Union[argparse.Namespace, None] = None) -> None:
         # ------------------------------------------------------------------
         # STEP-WISE UNCERTAINTY METRICS
         # ------------------------------------------------------------------
-        try:
-            from lm_eval.budget_forcing.scalers import (
-                print_stepwise_metrics, get_stepwise_metrics,
-            )
+        # try:
+        #     from budget_forcing.scalers.step_wise_uncertainty_driven import (
+        #         print_stepwise_metrics, get_stepwise_metrics,
+        #     )
 
-            # Print metrics inside the same interpreter (avoids zero reset)
-            print_stepwise_metrics()
+        #     # Print metrics inside the same interpreter (avoids zero reset)
+        #     print_stepwise_metrics()
 
-            # Persist metrics JSON next to the evaluation output
-            if args.output_path:
-                # If output_path is a directory, use it; otherwise its parent
-                out_dir = (
-                    args.output_path
-                    if os.path.isdir(args.output_path)
-                    else os.path.dirname(args.output_path)
-                )
-                if out_dir == "":
-                    out_dir = "."
+        #     # Persist metrics JSON next to the evaluation output
+        #     if args.output_path:
+        #         # If output_path is a directory, use it; otherwise its parent
+        #         out_dir = (
+        #             args.output_path
+        #             if os.path.isdir(args.output_path)
+        #             else os.path.dirname(args.output_path)
+        #         )
+        #         if out_dir == "":
+        #             out_dir = "."
 
-                metrics_path = os.path.join(out_dir, "stepwise_metrics.json")
-                with open(metrics_path, "w", encoding="utf-8") as f:
-                    _json.dump(get_stepwise_metrics(), f, indent=2)
+        #         metrics_path = os.path.join(out_dir, "stepwise_metrics.json")
+        #         with open(metrics_path, "w", encoding="utf-8") as f:
+        #             _json.dump(get_stepwise_metrics(), f, indent=2)
 
-                eval_logger.info(
-                    f"Step-wise uncertainty metrics saved to {metrics_path}"
-                )
-        except Exception as e:
-            eval_logger.warning(
-                f"Could not save step-wise metrics (non-critical): {e}"
-            )
+        #         eval_logger.info(
+        #             f"Step-wise uncertainty metrics saved to {metrics_path}"
+        #         )
+        # except Exception as e:
+        #     eval_logger.warning(
+        #         f"Could not save step-wise metrics (non-critical): {e}"
+        #     )
 
 
 if __name__ == "__main__":

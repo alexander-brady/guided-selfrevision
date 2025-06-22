@@ -1,6 +1,6 @@
 ### Evaluation 
 
-> Cloned from [original s1 repo](https://github.com/simplescaling/s1/tree/main/eval) at commit `31a10f2481cb6708e4afa4154f9d74acd5dd70f8`.
+> Cloned from [original s1 repo](https://github.com/simplescaling/s1/tree/main/eval) at commit `31a10f2481cb6708e4afa4154f9d74acd5dd70f8`. Minor modifications were made to use our implementations of budget forcing.
 
 We cloned [lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) at commit `4cec66e4e468d15789473d6d63c3a61a751fa524` and modified it. Setup:
 ```bash

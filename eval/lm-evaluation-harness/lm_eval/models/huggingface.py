@@ -35,7 +35,7 @@ from lm_eval.models.utils import (
     pad_and_concat,
     stop_sequences_criteria,
 )
-from lm_eval.budget_forcing import generate_with_budget_forcing
+from budget_forcing import generate_with_budget_forcing
 
 if int(os.getenv("O1INFERENCE", 0)):
     import sys

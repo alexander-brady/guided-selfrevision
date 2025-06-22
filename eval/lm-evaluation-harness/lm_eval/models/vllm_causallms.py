@@ -17,8 +17,8 @@ from lm_eval.utils import (
     make_disjoint_window,
 )
 
+from budget_forcing.core import generate_with_budget_forcing
 
-from lm_eval.budget_forcing.core import generate_with_budget_forcing
 
 try:
     import ray
@@ -232,7 +232,7 @@ class VLLM(TemplateLM):
                 # Extract debug flag for budget forcing
                 # debug = kwargs.pop("debug", False)
                 return generate_with_budget_forcing(
-                    llm=self,
+                    lm=self,
                     requests=requests,
                     max_tokens=max_tokens,
                     stop_sequences=stop,
