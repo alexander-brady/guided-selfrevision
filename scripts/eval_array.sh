@@ -9,16 +9,16 @@
 #SBATCH --gres=gpumem:64g
 #SBATCH --time=24:00:00
 #SBATCH --mail-type=END,FAIL
-#SBATCH --array=1-10
+#SBATCH --array=1-5,7-10
 
 MODEL="s1.1-1.5B" # From simplescaling repo
 MAX_BUDGET_FORCING_STEPS=${SLURM_ARRAY_TASK_ID} # Use the array task ID as the max budget forcing steps
 WAIT_TOKEN="Wait"
 
-SCALE_FUNCTION="default"
+# SCALE_FUNCTION="default"
 # SCALE_FUNCTION="entropy_thresholding"
-# SCALE_FUNCTION="uncertainty_driven_reevaluation"
-OUTPUT_PATH="../../results/$USER/${SLURM_JOB_ID}_${SCALE_FUNCTION}_${MAX_BUDGET_FORCING_STEPS}"
+SCALE_FUNCTION="uncertainty_driven_reevaluation"
+OUTPUT_PATH="../../results/$USER/${SCALE_FUNCTION}_${MAX_BUDGET_FORCING_STEPS}_${SLURM_JOB_ID}"
 
 module load stack/2024-06 gcc/12.2.0 python/3.11.6 cuda/11.3.1 eth_proxy
 
