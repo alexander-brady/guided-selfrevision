@@ -70,6 +70,12 @@ _Parameters (set in `gen_kwargs`):_
 
 _Parameters (set in `gen_kwargs`):_
 - `min_threshold`: The minimum uncertainty threshold for the model to reevaluate an utterance sequence. If no utterance sequence is found with uncertainty above this threshold, the model will not be prompted to re-evaluate. Default is -1, which means that the model will always be prompted to re-evaluate.
+- `ablation`: Various ablation strategies can be applied to change the selection of utterance sequences to re-evaluate. The available ablation strategies are:
+  - `none`: No ablation (default); always re-evaluate the utterance sequence with the highest uncertainty.
+  - `random`: Randomly select an utterance sequence to re-evaluate.
+  - `last`: Re-evaluate the last utterance sequence.
+  - `certain`: Re-evaluate the utterance sequence with the lowest uncertainty.
+  - `third`: Re-evaluate the utterance sequence with the third highest uncertainty.
 
 ### Custom Scaling Functions
 Custom scaling functions can be defined to implement new budget forcing strategies or to modify the behavior of existing ones. A scaling function must accept the following parameters:

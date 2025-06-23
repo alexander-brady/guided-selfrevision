@@ -1,7 +1,7 @@
 #!/bin/bash
-#SBATCH --job-name=s1_eval_job
-#SBATCH --output=logs/unc_32B_eval_%j.out
-#SBATCH --error=logs/unc_32B_eval_%j.err
+#SBATCH --job-name=s1_eval
+#SBATCH --output=logs/s1_32B_eval_%j.out
+#SBATCH --error=logs/s1_32B_eval_%j.err
 #SBATCH --ntasks=1
 #SBATCH --mem-per-cpu=16G
 #SBATCH --nodes=1
@@ -10,8 +10,8 @@
 #SBATCH --time=24:00:00
 #SBATCH --mail-type=END,FAIL
 
-# MODEL="s1.1-1.5B" # From simplescaling repo
-MODEL="s1.1-32B"
+MODEL="s1.1-1.5B" # From simplescaling repo
+# MODEL="s1.1-32B"
 MAX_BUDGET_FORCING_STEPS=4
 WAIT_TOKEN="Wait"
 

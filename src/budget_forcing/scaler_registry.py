@@ -35,10 +35,14 @@ def get_scale_func(func_name: str, scale_token: List[int], **kwargs) -> Callable
                 last_k=kwargs.pop("last_k", -1)                     
             )
         case "uncertainty_driven_reevaluation":
+            ablation= kwargs.pop("ablation", None)
+            if ablation:
+                print(f"Using ablation: {ablation}")                
             return partial(
                 scalers.uncertainty_driven_reevaluation,
                 scale_token=scale_token,
-                min_threshold=kwargs.pop("min_threshold", -1.0)
+                min_threshold=kwargs.pop("min_threshold", -1.0),
+                ablation=ablation
             )
         case "step_wise_uncertainty_driven":
             step_selection_strategy = str(kwargs.pop("step_selection_strategy", "highest_uncertainty"))

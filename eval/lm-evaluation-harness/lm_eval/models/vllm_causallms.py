@@ -775,6 +775,7 @@ class VLLM(TemplateLM):
             "threshold",
             "decay_factor",
             "last_k",
+            "ablation",
             # HF-specific parameters that don't exist in vLLM
             "do_sample",  # Already handled above
             "max_tokens_thinking",  # Handled in thinking logic, not SamplingParams

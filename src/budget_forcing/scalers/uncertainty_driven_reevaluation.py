@@ -1,5 +1,5 @@
 import numpy as np
-from typing import List, Tuple, Callable, TYPE_CHECKING
+from typing import List, Tuple, Callable, Optional, TYPE_CHECKING
 from budget_forcing.scalers.util import scale_token_only
 
 if TYPE_CHECKING:
@@ -14,6 +14,7 @@ def uncertainty_driven_reevaluation(
     uncertainties: List[float],
     lm: 'VLLM',
     min_threshold: float = -1.0,
+    ablation: Optional[str] = None
 ) -> List[int]:
     """
     Prompts model to continue reasoning on uncertain sequences.
@@ -36,14 +37,18 @@ def uncertainty_driven_reevaluation(
 
     uncertain_utterance, max_uncertainty = max(segments, key=lambda x: x[1])
     
-    ### ABLATIONS ###
-    # Randomly select a segment to continue reasoning on.
-    # uncertain_utterance, max_uncertainty = segments[np.random.randint(len(segments))
-    # Always take the last segment for reevaluation.
-    # uncertain_utterance, max_uncertainty = segments[-1]
-    # Ablation: Use the third most uncertain segment.
-    # sorted_segments = sorted(segments, key=lambda x: x[1], reverse=True)
-    # uncertain_utterance, max_uncertainty = sorted_segments[2] if len(sorted_segments) > 2 else sorted_segments[0]
+    match ablation:
+        case 'random': # Reevaluate a random segment.
+            uncertain_utterance, max_uncertainty = segments[np.random.randint(len(segments))]
+        case 'last': # Always reevaluate the last segment.
+            uncertain_utterance, max_uncertainty = segments[-1]
+        case 'third': # Take the third most uncertain segment.
+            sorted_segments = sorted(segments, key=lambda x: x[1], reverse=True)
+            uncertain_utterance, max_uncertainty = sorted_segments[2] if len(sorted_segments) > 2 else sorted_segments[0]
+        case 'certain': # Use the most certain segment.
+            uncertain_utterance, max_uncertainty = min(segments, key=lambda x: x[1]) 
+        case _: # No ablation, use the most uncertain segment.
+            uncertain_utterance, max_uncertainty = max(segments, key=lambda x: x[1])
     
     if max_uncertainty < min_threshold:
         return [] # Stop scaling if the model is confident enough.
