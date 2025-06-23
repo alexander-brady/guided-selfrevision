@@ -778,6 +778,12 @@ class VLLM(TemplateLM):
             "threshold",
             "decay_factor",
             "last_k",
+            # EIG reasoning parameters
+            "beam_size",
+            "mc_samples", 
+            "sample_length",
+            "lambda_cost",
+            "max_computation_time",
             # HF-specific parameters that don't exist in vLLM
             "do_sample",  # Already handled above
             "max_tokens_thinking",  # Handled in thinking logic, not SamplingParams

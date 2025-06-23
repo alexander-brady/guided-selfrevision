@@ -1,0 +1,15 @@
+{
+  "total_calls": 0,
+  "successful_extractions": 0,
+  "parsing_failures": 0,
+  "steps_found_total": 0,
+  "steps_revised_total": 0,
+  "uncertainty_calculations_failed": 0,
+  "first_call_details": null,
+  "fallback_reasons": {},
+  "error_details": [],
+  "success_rate": 0.0,
+  "failure_rate": 1.0,
+  "avg_steps_per_call": 0.0,
+  "failure_rate_breakdown": {}
+}

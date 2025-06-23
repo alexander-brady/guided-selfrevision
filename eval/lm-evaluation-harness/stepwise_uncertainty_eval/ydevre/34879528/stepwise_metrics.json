@@ -1,0 +1,29 @@
+{
+  "total_calls": 24,
+  "successful_extractions": 24,
+  "parsing_failures": 0,
+  "steps_found_total": 27,
+  "steps_revised_total": 24,
+  "uncertainty_calculations_failed": 0,
+  "first_call_details": {
+    "status": "successful_revision",
+    "steps_found": 1,
+    "step_uncertainties": [
+      0.01613367782685604
+    ],
+    "selected_step": 1,
+    "selected_uncertainty": 0.01613367782685604,
+    "strategy": "highest_uncertainty",
+    "continuation_prompt": "\n\nLet me revisit Step 1 in more detail and make sure I got it right:\n\nStep 1 (revisited):",
+    "eligible_steps_count": 1,
+    "use_min_uncertainty_filter": false,
+    "min_step_uncertainty": null,
+    "call_id": 1
+  },
+  "fallback_reasons": {},
+  "error_details": [],
+  "success_rate": 1.0,
+  "failure_rate": 0.0,
+  "avg_steps_per_call": 1.125,
+  "failure_rate_breakdown": {}
+}

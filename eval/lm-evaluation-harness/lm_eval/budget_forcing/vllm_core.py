@@ -32,6 +32,8 @@ def _clean_vllm_kwargs(kwargs: dict, debug: bool = False) -> dict:
         "scale_func_name", "step_selection_strategy", "max_steps",
         "use_min_uncertainty_filter", "min_step_uncertainty",
         "threshold", "decay_factor", "last_k",
+        # EIG reasoning parameters (handled in scaler)
+        "beam_size", "mc_samples", "sample_length", "lambda_cost", "max_computation_time",
         # Debug parameter (handled separately)
         "debug"
     ]
@@ -225,6 +227,12 @@ def generate_with_budget_forcing_vllm(
         "threshold",
         "decay_factor",
         "last_k",
+        # EIG reasoning parameters
+        "beam_size",
+        "mc_samples", 
+        "sample_length",
+        "lambda_cost",
+        "max_computation_time",
     ]
     custom_kwargs = {k: generation_kwargs.pop(k) for k in custom_keys if k in generation_kwargs}
 

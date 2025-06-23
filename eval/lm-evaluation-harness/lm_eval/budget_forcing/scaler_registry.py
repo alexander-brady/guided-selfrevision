@@ -3,7 +3,11 @@ from typing import Callable, List
 import traceback
 import os
 
-from lm_eval.budget_forcing.scalers import entropy_thresholding, step_wise_uncertainty_driven
+from lm_eval.budget_forcing.scalers import (
+    entropy_thresholding, 
+    step_wise_uncertainty_driven,
+    expected_information_gain_reasoning
+)
 
 
 def get_scale_func(func_name: str, scale_token: List[int], **kwargs) -> Callable:
@@ -184,6 +188,78 @@ def get_scale_func(func_name: str, scale_token: List[int], **kwargs) -> Callable
             
         except Exception as e:
             print(f"⚠️  ERROR initializing step_wise_uncertainty_driven: {e}")
+            print(f"   Falling back to default scale function")
+            return default_scale_func
+
+    # Handle expected_information_gain_reasoning with comprehensive parameter validation
+    if func_name == "expected_information_gain_reasoning":
+        try:
+            # Extract and validate EIG parameters
+            beam_size = int(kwargs.pop("beam_size", 8))
+            mc_samples = int(kwargs.pop("mc_samples", 5))
+            sample_length = int(kwargs.pop("sample_length", 64))
+            temperature = float(kwargs.pop("temperature", 1.0))
+            top_p = float(kwargs.pop("top_p", 0.9))
+            lambda_cost = float(kwargs.pop("lambda_cost", 0.05))
+            max_computation_time = float(kwargs.pop("max_computation_time", 30.0))
+            
+            print(f"🔧 Initializing expected_information_gain_reasoning:")
+            print(f"   beam_size={beam_size}")
+            print(f"   mc_samples={mc_samples}")
+            print(f"   sample_length={sample_length}")
+            print(f"   temperature={temperature}")
+            print(f"   top_p={top_p}")
+            print(f"   lambda_cost={lambda_cost}")
+            print(f"   max_computation_time={max_computation_time}")
+            
+            # Validate parameters with reasonable bounds
+            if beam_size <= 0 or beam_size > 20:
+                print(f"⚠️  WARNING: Invalid beam_size {beam_size}, using 8")
+                beam_size = 8
+            
+            if mc_samples <= 0 or mc_samples > 20:
+                print(f"⚠️  WARNING: Invalid mc_samples {mc_samples}, using 5")
+                mc_samples = 5
+                
+            if sample_length <= 0 or sample_length > 512:
+                print(f"⚠️  WARNING: Invalid sample_length {sample_length}, using 64")
+                sample_length = 64
+                
+            if temperature <= 0 or temperature > 2.0:
+                print(f"⚠️  WARNING: Invalid temperature {temperature}, using 1.0")
+                temperature = 1.0
+                
+            if top_p <= 0 or top_p > 1.0:
+                print(f"⚠️  WARNING: Invalid top_p {top_p}, using 0.9")
+                top_p = 0.9
+                
+            if lambda_cost < 0 or lambda_cost > 10.0:
+                print(f"⚠️  WARNING: Invalid lambda_cost {lambda_cost}, using 0.05")
+                lambda_cost = 0.05
+                
+            if max_computation_time <= 0 or max_computation_time > 300.0:
+                print(f"⚠️  WARNING: Invalid max_computation_time {max_computation_time}, using 30.0")
+                max_computation_time = 30.0
+            
+            def eig_func(iteration, seq, entropies, hflm):
+                return expected_information_gain_reasoning(
+                    beam_size=beam_size,
+                    mc_samples=mc_samples,
+                    sample_length=sample_length,
+                    temperature=temperature,
+                    top_p=top_p,
+                    lambda_cost=lambda_cost,
+                    max_computation_time=max_computation_time,
+                    iteration=iteration,
+                    seq=seq,
+                    entropies=entropies,
+                    hflm=hflm,
+                )
+            
+            return safe_wrapper(eig_func, "expected_information_gain_reasoning")
+            
+        except Exception as e:
+            print(f"⚠️  ERROR initializing expected_information_gain_reasoning: {e}")
             print(f"   Falling back to default scale function")
             return default_scale_func
 

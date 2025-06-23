@@ -1,10 +1,13 @@
 import math
 import re
 import random
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple
 import torch
 
 from functools import wraps
+
+# Import EIG components
+from lm_eval.budget_forcing.eig_core import ExpectedInformationGainCalculator
 
 # Global metrics tracking for step-wise uncertainty
 _STEPWISE_METRICS = {
@@ -17,6 +20,16 @@ _STEPWISE_METRICS = {
     "first_call_details": None,
     "fallback_reasons": {},  # Track reasons for fallbacks
     "error_details": [],     # Detailed error logs
+}
+
+# Global metrics tracking for EIG (similar to stepwise)
+_EIG_METRICS = {
+    "total_calls": 0,
+    "successful_calculations": 0,
+    "information_gains": [],
+    "decision_history": [],
+    "computation_times": [],
+    "first_call_details": None,
 }
 
 
@@ -710,3 +723,282 @@ def uncertainty_driven_pondering(
     pass
     # tokens_to_reevaluate = []
     # hflm.tokens_to_str
+
+    print("="*80)
+
+
+def expected_information_gain_reasoning(
+    beam_size: int,
+    mc_samples: int,
+    sample_length: int,
+    temperature: float,
+    top_p: float,
+    lambda_cost: float,
+    max_computation_time: float,
+    iteration: int,
+    seq: List[int],
+    entropies: List[float],
+    hflm,  # vLLM model instance (keeping hflm name for compatibility)
+) -> Tuple[bool, List[int]]:
+    """
+    Expected Information Gain reasoning scaler for vLLM models.
+    
+    Mathematical Framework:
+    - Computes EIG_t = H_t - E[H_{t+1} | H_t]
+    - Continues reasoning iff EIG_t > λ (lambda_cost)
+    - H_t: current answer posterior entropy
+    - E[H_{t+1} | H_t]: expected entropy after one more reasoning step
+    
+    FIXED: Enhanced error handling, better vLLM integration, improved math reasoning.
+    
+    Args:
+        beam_size: Number of answer candidates to consider
+        mc_samples: Number of Monte Carlo samples for forecasting
+        sample_length: Length of each MC sample continuation
+        temperature: Sampling temperature for MC
+        top_p: Top-p sampling parameter for MC
+        lambda_cost: Information cost threshold λ
+        max_computation_time: Maximum computation time per call
+        iteration: Current reasoning iteration
+        seq: Current token sequence as list of token IDs
+        entropies: Per-token entropies (fallback)
+        hflm: vLLM model instance
+        
+    Returns:
+        Tuple of (continue_reasoning, continuation_tokens)
+    """
+    global _EIG_CALCULATOR, _EIG_METRICS
+    
+    # Initialize calculator if needed (singleton pattern)
+    if '_EIG_CALCULATOR' not in globals():
+        _EIG_CALCULATOR = ExpectedInformationGainCalculator(
+            beam_size=beam_size,
+            mc_samples=mc_samples,
+            sample_length=sample_length,
+            temperature=temperature,
+            top_p=top_p,
+            lambda_cost=lambda_cost,
+            max_computation_time=max_computation_time
+        )
+        print(f"🔬 Initialized EIG Calculator for vLLM with improved math reasoning")
+        print(f"   Parameters: beam_size={beam_size}, mc_samples={mc_samples}, λ={lambda_cost}")
+    
+    # Update global metrics
+    _EIG_METRICS["total_calls"] += 1
+    
+    # Store first call details for debugging
+    if _EIG_METRICS["first_call_details"] is None:
+        _EIG_METRICS["first_call_details"] = {
+            "iteration": iteration,
+            "seq_length": len(seq) if seq else 0,
+            "beam_size": beam_size,
+            "mc_samples": mc_samples,
+            "lambda_cost": lambda_cost,
+            "model_type": str(type(hflm))
+        }
+        print(f"\n🔬 FIRST EIG REASONING ANALYSIS:")
+        print(f"   Iteration: {iteration}")
+        print(f"   Sequence length: {len(seq) if seq else 0}")
+        print(f"   Beam size: {beam_size}")
+        print(f"   MC samples: {mc_samples}")
+        print(f"   Lambda cost threshold: {lambda_cost}")
+        print(f"   vLLM model type: {type(hflm)}")
+        
+        # Debug: Show some of the current text
+        try:
+            current_text = hflm.tokenizer.decode(seq, skip_special_tokens=True)
+            print(f"   Current text preview: '{current_text[:200]}{'...' if len(current_text) > 200 else ''}'")
+        except Exception as e:
+            print(f"   Could not decode current text: {e}")
+    
+    # Validate inputs
+    if not seq or len(seq) == 0:
+        print(f"⚠️  EIG WARNING: Empty sequence provided, stopping")
+        return False, []
+    
+    if iteration >= 5:  # Prevent infinite loops
+        print(f"⚠️  EIG WARNING: Too many iterations ({iteration}), stopping to prevent infinite loop")
+        return False, []
+    
+    try:
+        # Compute expected information gain
+        information_gain, details = _EIG_CALCULATOR.compute_expected_information_gain(
+            iteration=iteration,
+            seq=seq,
+            entropies=entropies,
+            vllm_model=hflm
+        )
+        
+        # Apply decision rule
+        should_continue = _EIG_CALCULATOR.should_continue_reasoning(
+            information_gain, details
+        )
+        
+        # Update metrics
+        _EIG_METRICS["successful_calculations"] += 1
+        _EIG_METRICS["information_gains"].append(information_gain)
+        _EIG_METRICS["decision_history"].append(should_continue)
+        _EIG_METRICS["computation_times"].append(details.get('computation_time', 0))
+        
+        # Log detailed information for first few calls
+        if _EIG_METRICS["total_calls"] <= 3:
+            print(f"\n🔬 EIG REASONING ANALYSIS (Iteration {iteration}, Call {_EIG_METRICS['total_calls']}):")
+            print(f"   Current entropy H_t: {details.get('current_entropy', 0):.4f}")
+            print(f"   Expected future entropy E[H_{{t+1}}]: {details.get('expected_future_entropy', 0):.4f}")
+            print(f"   Information gain EIG_t: {information_gain:.4f}")
+            print(f"   Cost threshold λ: {lambda_cost:.4f}")
+            print(f"   Decision: {'CONTINUE' if should_continue else 'STOP'}")
+            print(f"   Computation time: {details.get('computation_time', 0):.2f}s")
+            
+            if not details.get('success', False):
+                print(f"   ⚠️  Computation failed: {details.get('error', 'Unknown error')}")
+        
+        if not details.get('success', False):
+            print(f"   ⚠️  EIG computation failed, using conservative fallback (STOP)")
+            return False, []
+        
+        # Generate appropriate continuation token based on math reasoning patterns
+        if should_continue:
+            try:
+                # Get current text to determine context
+                current_text = hflm.tokenizer.decode(seq, skip_special_tokens=True)
+                
+                # Generate context-aware continuation prompts for math problems
+                if information_gain > 2 * lambda_cost:
+                    # High information gain: deep mathematical analysis
+                    continuation_prompts = [
+                        "\n\nLet me analyze this step more carefully to make sure my reasoning is correct:\n\n",
+                        "\n\nI should double-check this calculation and consider alternative approaches:\n\n",
+                        "\n\nLet me break this down further to ensure accuracy:\n\n"
+                    ]
+                elif information_gain > 1.5 * lambda_cost:
+                    # Moderate information gain: focused thinking
+                    continuation_prompts = [
+                        "\n\nLet me think through this step more systematically:\n\n",
+                        "\n\nI need to be more careful with this calculation:\n\n",
+                        "\n\nLet me reconsider this approach:\n\n"
+                    ]
+                else:
+                    # Low but sufficient information gain: standard continuation
+                    continuation_prompts = [
+                        "\n\nContinuing with the next step:\n\n",
+                        "\n\nNow let me proceed:\n\n",
+                        "\n\nNext:\n\n"
+                    ]
+                
+                # Choose the most appropriate prompt based on current context
+                if "calculate" in current_text.lower() or "compute" in current_text.lower():
+                    continuation_prompt = continuation_prompts[0]  # More careful analysis
+                elif "step" in current_text.lower():
+                    continuation_prompt = "\n\nStep " + str(iteration + 2) + ":\n\n"
+                else:
+                    continuation_prompt = continuation_prompts[min(len(continuation_prompts)-1, iteration)]
+                
+                continuation_tokens = hflm.tok_encode(continuation_prompt)
+                
+                if len(continuation_tokens) == 0:
+                    print(f"   ⚠️  Failed to encode continuation prompt, using fallback")
+                    continuation_tokens = hflm.tok_encode("\n\n")
+                
+                return True, continuation_tokens
+                
+            except Exception as e:
+                print(f"   ⚠️  Token encoding failed: {e}")
+                # Fallback to simple continuation
+                try:
+                    fallback_tokens = hflm.tok_encode("\n\n")
+                    return True, fallback_tokens
+                except Exception as e2:
+                    print(f"   ⚠️  Even fallback encoding failed: {e2}")
+                    return False, []
+        else:
+            return False, []
+            
+    except Exception as e:
+        print(f"⚠️  EIG REASONING CRITICAL ERROR: {e}")
+        print(f"   Iteration: {iteration}")
+        print(f"   Sequence length: {len(seq) if seq else 'None'}")
+        print(f"   Model type: {type(hflm)}")
+        
+        # More detailed error information for debugging
+        import traceback
+        print(f"   Full traceback:")
+        traceback.print_exc()
+        
+        print(f"   Falling back to conservative behavior (STOP)")
+        return False, []
+
+
+def get_eig_metrics_summary() -> Dict[str, Any]:
+    """
+    Get comprehensive metrics summary for EIG reasoning.
+    
+    Returns:
+        Dictionary containing detailed metrics and statistics
+    """
+    global _EIG_CALCULATOR, _EIG_METRICS
+    
+    # Combine global metrics with calculator metrics
+    summary = _EIG_METRICS.copy()
+    
+    if '_EIG_CALCULATOR' not in globals():
+        summary["message"] = "EIG calculator not initialized yet"
+        return summary
+    
+    # Get detailed metrics from calculator
+    calculator_metrics = _EIG_CALCULATOR.get_metrics_summary()
+    summary.update(calculator_metrics)
+    
+    return summary
+
+
+def print_eig_metrics():
+    """Print comprehensive EIG reasoning metrics."""
+    metrics = get_eig_metrics_summary()
+    
+    print("\n" + "="*80)
+    print("🔬 EXPECTED INFORMATION GAIN REASONING METRICS")
+    print("="*80)
+    
+    if "message" in metrics:
+        print(f"📊 {metrics['message']}")
+        return
+    
+    # Overall statistics
+    print("🔢 OVERALL STATISTICS:")
+    print(f"   Total EIG computations: {metrics.get('total_calls', 0)}")
+    print(f"   Success rate: {metrics.get('success_rate', 0):.2%}")
+    
+    # Information gain statistics
+    if "information_gain_stats" in metrics:
+        ig_stats = metrics["information_gain_stats"]
+        print(f"\n📈 INFORMATION GAIN STATISTICS:")
+        print(f"   Mean EIG: {ig_stats['mean']:.4f}")
+        print(f"   Std EIG: {ig_stats['std']:.4f}")
+        print(f"   Min EIG: {ig_stats['min']:.4f}")
+        print(f"   Max EIG: {ig_stats['max']:.4f}")
+    
+    # Decision statistics
+    if "decision_stats" in metrics:
+        dec_stats = metrics["decision_stats"]
+        print(f"\n🎯 DECISION STATISTICS:")
+        print(f"   Continue rate: {dec_stats['continue_rate']:.2%}")
+        print(f"   Total decisions: {dec_stats['total_decisions']}")
+    
+    # Timing statistics
+    if "timing_stats" in metrics:
+        print(f"\n⏱️  TIMING STATISTICS:")
+        for component, times in metrics["timing_stats"].items():
+            print(f"   {component}: {times['mean']:.3f}s ± {times['std']:.3f}s (total: {times['total']:.1f}s)")
+    
+    # Failure breakdown
+    if "failure_breakdown" in metrics:
+        failures = metrics["failure_breakdown"]
+        total_failures = sum(failures.values())
+        if total_failures > 0:
+            print(f"\n🚨 FAILURE BREAKDOWN:")
+            for failure_type, count in failures.items():
+                if count > 0:
+                    print(f"   {failure_type}: {count} times")
+    
+    print("="*80)
