@@ -1,6 +1,6 @@
 # Uncertainty Driven Test-Time Scaling
 
-Recent research has shown that even in small language models, forcing reasoning steps during generation can significantly improve the model's performance on reasoning tasks. This technique, introduced by [Muennighof et al.](https://arxiv.org/abs/2501.19393), is known as budget forcing. It involves prompting the model with a continuation token, such as "Wait", after each generation, encouraging it to generate additional reasoning steps before arriving at a final answer.
+Recent research has shown that even in small language models, forcing reasoning steps during generation can significantly improve the model's performance on reasoning tasks. This technique, introduced by [Muennighof et al.](https://arxiv.org/abs/2501.19393), is known as _budget forcing_. It involves prompting the model with a continuation token, such as "Wait", after each generation, encouraging it to generate additional reasoning steps before arriving at a final answer.
 
 This repository aims to extend the budget forcing technique by incorporating uncertainty-aware inference techniques. The goal is to improve the reasoning capabilities of large language models by allowing them to dynamically adjust their reasoning process based on their confidence in the generated tokens.
 
